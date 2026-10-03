@@ -6,11 +6,21 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.mobyle.data.local.database.*
 import org.mobyle.data.remote.tmdb.model.TmdbCredits
+import org.mobyle.domain.model.FilmowMoviePartial
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieDetail
 import org.mobyle.domain.model.WatchProvider
 
 class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
+
+    override fun findById(id: Long): Movie? {
+        return transaction {
+            MoviesTable.selectAll()
+                .where { MoviesTable.id eq id }
+                .firstOrNull()
+                ?.let { rowToMovie(it) }
+        }
+    }
 
     override fun findByTmdbId(tmdbId: Int): Movie? {
         return transaction {
@@ -62,9 +72,11 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             }
 
             // 2. Fall back to tmdbId lookup
-            val existing = bySourceId ?: MoviesTable.selectAll()
-                .where { MoviesTable.tmdbId eq movie.id }
-                .firstOrNull()
+            val existing = bySourceId ?: movie.tmdbId?.let { tid ->
+                MoviesTable.selectAll()
+                    .where { MoviesTable.tmdbId eq tid }
+                    .firstOrNull()
+            }
 
             if (existing != null) {
                 val dbId = existing[MoviesTable.id].value
@@ -82,7 +94,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 dbId
             } else {
                 MoviesTable.insertAndGetId {
-                    it[tmdbId] = movie.id
+                    it[tmdbId] = movie.tmdbId
                     it[title] = movie.title
                     it[localTitle] = movie.localTitle
                     it[originalTitle] = movie.originalTitle
@@ -109,7 +121,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             val movieDbId = movieRow[MoviesTable.id].value
 
             MoviesTable.update({ MoviesTable.tmdbId eq tmdbId }) {
-                it[overview] = detail.overview
+                if (detail.overview.isNotBlank()) it[overview] = detail.overview
                 it[backdropPath] = detail.backdropPath
                 it[releaseDate] = detail.releaseDate
                 it[runtime] = detail.runtime
@@ -226,7 +238,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                         originalTitle = row[MoviesTable.originalTitle],
                         year = row[MoviesTable.year],
                         filmowId = row[MoviesTable.filmowId],
-                        needsResolution = tmdbId < 0
+                        needsResolution = tmdbId == null
                     )
                 }
         }
@@ -277,7 +289,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .where { MovieSimilarsTable.movieId eq movieDbId }
                 .map { r ->
                     Movie(
-                        id = r[MovieSimilarsTable.similarTmdbId],
+                        tmdbId = r[MovieSimilarsTable.similarTmdbId],
                         title = r[MovieSimilarsTable.title],
                         posterPath = r[MovieSimilarsTable.posterPath],
                         voteAverage = r[MovieSimilarsTable.voteAverage]?.toDouble() ?: 0.0,
@@ -295,7 +307,8 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 }
 
             MovieDetail(
-                id = row[MoviesTable.tmdbId],
+                id = movieDbId,
+                tmdbId = row[MoviesTable.tmdbId],
                 title = row[MoviesTable.title],
                 originalTitle = row[MoviesTable.originalTitle],
                 overview = row[MoviesTable.overview] ?: "",
@@ -326,9 +339,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
             val now = Clock.System.now()
             for (movie in similars) {
+                val tmdbId = movie.tmdbId ?: continue
                 MovieSimilarsTable.upsert(MovieSimilarsTable.movieId, MovieSimilarsTable.similarTmdbId) {
                     it[movieId] = movieDbId
-                    it[similarTmdbId] = movie.id
+                    it[similarTmdbId] = tmdbId
                     it[title] = movie.title
                     it[posterPath] = movie.posterPath
                     it[voteAverage] = movie.voteAverage.takeIf { v -> v > 0.0 }?.toFloat()
@@ -378,7 +392,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
             val movies = rows.map { r ->
                 Movie(
-                    id = r[MovieSimilarsTable.similarTmdbId],
+                    tmdbId = r[MovieSimilarsTable.similarTmdbId],
                     title = r[MovieSimilarsTable.title],
                     posterPath = r[MovieSimilarsTable.posterPath],
                     voteAverage = r[MovieSimilarsTable.voteAverage]?.toDouble() ?: 0.0,
@@ -416,27 +430,28 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
         }
     }
 
-    override fun cacheMovieList(movies: List<Movie>) {
-        transaction {
-            for (movie in movies) {
-                if (movie.id <= 0) continue
+    override fun cacheMovieListWithIds(movies: List<Movie>): List<Movie> {
+        return transaction {
+            movies.map { movie ->
+                val tid = movie.tmdbId ?: return@map movie
                 val existing = MoviesTable.selectAll()
-                    .where { MoviesTable.tmdbId eq movie.id }
+                    .where { MoviesTable.tmdbId eq tid }
                     .firstOrNull()
 
-                if (existing != null) {
-                    val dbId = existing[MoviesTable.id].value
-                    MoviesTable.update({ MoviesTable.id eq dbId }) {
+                val dbId = if (existing != null) {
+                    val id = existing[MoviesTable.id].value
+                    MoviesTable.update({ MoviesTable.id eq id }) {
                         if (movie.posterPath != null) it[posterPath] = movie.posterPath
                         if (movie.backdropPath != null) it[backdropPath] = movie.backdropPath
                         if (movie.voteAverage > 0.0) it[voteAverage] = movie.voteAverage.toFloat()
                         if (movie.releaseDate != null) it[releaseDate] = movie.releaseDate
                         if (movie.overview.isNotBlank()) it[overview] = movie.overview
                     }
+                    id
                 } else {
                     val hasBasicData = movie.overview.isNotBlank()
                     MoviesTable.insertAndGetId {
-                        it[tmdbId] = movie.id
+                        it[tmdbId] = tid
                         it[title] = movie.title
                         it[originalTitle] = movie.originalTitle
                         it[year] = movie.releaseDate?.take(4)?.toIntOrNull()
@@ -446,8 +461,9 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                         it[voteAverage] = movie.voteAverage.takeIf { v -> v > 0.0 }?.toFloat()
                         it[releaseDate] = movie.releaseDate
                         it[needsEnrichment] = !hasBasicData
-                    }
+                    }.value
                 }
+                movie.copy(id = dbId)
             }
         }
     }
@@ -525,6 +541,18 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
         }.value
     }
 
+    override fun saveFilmowPartials(details: Map<String, FilmowMoviePartial>) {
+        if (details.isEmpty()) return
+        transaction {
+            for ((filmowId, partial) in details) {
+                MoviesTable.update({ MoviesTable.filmowId eq filmowId }) {
+                    if (partial.imdbUrl != null) it[imdbUrl] = partial.imdbUrl
+                    if (partial.runtime != null) it[runtime] = partial.runtime
+                }
+            }
+        }
+    }
+
     override fun findByTitle(title: String): Movie? {
         return transaction {
             MoviesTable.selectAll()
@@ -540,7 +568,8 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
     private fun rowToMovie(row: ResultRow): Movie {
         return Movie(
-            id = row[MoviesTable.tmdbId],
+            id = row[MoviesTable.id].value,
+            tmdbId = row[MoviesTable.tmdbId],
             title = row[MoviesTable.title],
             localTitle = row[MoviesTable.localTitle],
             originalTitle = row[MoviesTable.originalTitle],

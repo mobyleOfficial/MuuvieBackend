@@ -1,11 +1,13 @@
 package org.mobyle.data.local.movies
 
+import org.mobyle.domain.model.FilmowMoviePartial
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieDetail
 import org.mobyle.domain.model.WatchProvider
 import org.mobyle.data.remote.tmdb.model.TmdbCredits
 
 interface MovieCatalogDataSource {
+    fun findById(id: Long): Movie?
     fun findByTmdbId(tmdbId: Int): Movie?
     fun findByFilmowId(filmowId: String): Movie?
     fun findByLetterboxdId(letterboxdId: String): Movie?
@@ -20,7 +22,9 @@ interface MovieCatalogDataSource {
     fun getMoviesNeedingEnrichment(limit: Int = 50): List<EnrichmentCandidate>
     fun getLocalMovieDetail(tmdbId: Int): MovieDetail?
     fun findByTitle(title: String): Movie?
-    fun cacheMovieList(movies: List<Movie>)
+    /** Upserts movies by tmdbId and returns them with their DB-assigned [Movie.id]. */
+    fun cacheMovieListWithIds(movies: List<Movie>): List<Movie>
+    fun saveFilmowPartials(details: Map<String, FilmowMoviePartial>)
 }
 
 data class CachedData<T>(
@@ -30,7 +34,7 @@ data class CachedData<T>(
 
 data class EnrichmentCandidate(
     val dbId: Long,
-    val tmdbId: Int,
+    val tmdbId: Int?,
     val title: String,
     val originalTitle: String?,
     val year: Int?,

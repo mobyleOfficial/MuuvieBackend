@@ -67,26 +67,27 @@ fun Route.getFilmowRouting() {
 
             val profile = scrapeFilmowProfile(request.cookies, request.username)
 
-            try {
+            val importedProfile = try {
                 importFilmowData(user.id, profile)
             } catch (e: Exception) {
                 log.error("[FILMOW] Import failed for user $userId: ${e.message}", e)
+                profile
             }
 
             scrapeStatusManager.clearScraping(user.id)
-            val recentlyWatchedJson = Json.encodeToString(profile.recentlyWatched)
+            val recentlyWatchedJson = Json.encodeToString(importedProfile.recentlyWatched)
             webSocketManager.send(user.id, WsMessage(
                 type = "scrape_finished",
                 payload = mapOf(
-                    "watched" to profile.watched.size.toString(),
-                    "watchlist" to profile.watchlist.size.toString(),
-                    "favorites" to profile.favorites.size.toString(),
-                    "lists" to profile.lists.size.toString(),
+                    "watched" to importedProfile.watched.size.toString(),
+                    "watchlist" to importedProfile.watchlist.size.toString(),
+                    "favorites" to importedProfile.favorites.size.toString(),
+                    "lists" to importedProfile.lists.size.toString(),
                     "recentlyWatched" to recentlyWatchedJson
                 )
             ))
 
-            call.respond(profile)
+            call.respond(importedProfile)
         } catch (e: Exception) {
             scrapeStatusManager.clearScraping(user.id)
             webSocketManager.send(user.id, WsMessage(

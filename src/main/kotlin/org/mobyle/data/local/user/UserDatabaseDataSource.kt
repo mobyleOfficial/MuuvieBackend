@@ -39,9 +39,9 @@ interface UserDatabaseDataSource {
     fun getWatchedMovies(userExternalId: String, page: Int, pageSize: Int = 20): MovieListing
     fun getUserLists(userExternalId: String, page: Int, pageSize: Int = 20): MovieListListing
     fun getListDetail(listId: Long, page: Int, pageSize: Int = 20): MovieListDetail
-    fun importMovies(userExternalId: String, movies: List<Movie>, status: String, isFavorite: Boolean = false)
-    fun importRecentlyWatched(userExternalId: String, movies: List<Movie>)
-    fun importLists(userExternalId: String, lists: List<FilmowList>)
+    fun importMovies(userExternalId: String, movies: List<Movie>, status: String, isFavorite: Boolean = false): List<Movie>
+    fun importRecentlyWatched(userExternalId: String, movies: List<Movie>): List<Movie>
+    fun importLists(userExternalId: String, lists: List<FilmowList>): List<FilmowList>
 }
 
 class UserDatabaseDataSourceImpl(
@@ -337,7 +337,8 @@ class UserDatabaseDataSourceImpl(
                         ?.get(UserMoviesTable.rating)?.toDouble()
 
                     Movie(
-                        id = row[MoviesTable.tmdbId],
+                        id = row[MoviesTable.id].value,
+                        tmdbId = row[MoviesTable.tmdbId],
                         title = row[MoviesTable.title],
                         localTitle = row[MoviesTable.localTitle],
                         originalTitle = row[MoviesTable.originalTitle],
@@ -363,7 +364,8 @@ class UserDatabaseDataSourceImpl(
 
     private fun rowToMovie(row: org.jetbrains.exposed.sql.ResultRow): Movie {
         return Movie(
-            id = row[MoviesTable.tmdbId],
+            id = row[MoviesTable.id].value,
+            tmdbId = row[MoviesTable.tmdbId],
             title = row[MoviesTable.title],
             localTitle = row[MoviesTable.localTitle],
             originalTitle = row[MoviesTable.originalTitle],
@@ -390,14 +392,15 @@ class UserDatabaseDataSourceImpl(
         movies: List<Movie>,
         status: String,
         isFavorite: Boolean
-    ) {
+    ): List<Movie> {
+        val result = mutableListOf<Movie>()
         transaction {
             val userDbId = resolveUserDbId(userExternalId) ?: return@transaction
             val now = Clock.System.now()
 
             for (movie in movies) {
-                if (movie.id == 0) continue
                 val movieDbId = ensureMovie(movie)
+                result += movie.copy(id = movieDbId)
 
                 if (isFavorite) {
                     // For favorites: only set isFavorite flag, don't overwrite watchedAt
@@ -455,9 +458,11 @@ class UserDatabaseDataSourceImpl(
                 }
             }
         }
+        return result
     }
 
-    override fun importRecentlyWatched(userExternalId: String, movies: List<Movie>) {
+    override fun importRecentlyWatched(userExternalId: String, movies: List<Movie>): List<Movie> {
+        val result = mutableListOf<Movie>()
         transaction {
             val userDbId = resolveUserDbId(userExternalId) ?: return@transaction
             val now = Clock.System.now()
@@ -465,8 +470,8 @@ class UserDatabaseDataSourceImpl(
             // Use the scraped watchedAt when available. Fall back to a staggered timestamp
             // so the profile-page order is preserved in ORDER BY watchedAt DESC.
             for ((index, movie) in movies.withIndex()) {
-                if (movie.id == 0) continue
                 val movieDbId = ensureMovie(movie)
+                result += movie.copy(id = movieDbId)
                 val staggeredWatchedAt = movie.watchedAt
                     ?.let { runCatching { Instant.parse(it) }.getOrNull() }
                     ?: now.plus(kotlin.time.Duration.parse("${movies.size - index}m"))
@@ -487,9 +492,11 @@ class UserDatabaseDataSourceImpl(
                 }
             }
         }
+        return result
     }
 
-    override fun importLists(userExternalId: String, lists: List<FilmowList>) {
+    override fun importLists(userExternalId: String, lists: List<FilmowList>): List<FilmowList> {
+        val result = mutableListOf<FilmowList>()
         transaction {
             val userDbId = resolveUserDbId(userExternalId) ?: return@transaction
             val now = Clock.System.now()
@@ -503,9 +510,10 @@ class UserDatabaseDataSourceImpl(
                     it[createdAt] = now
                 }
 
+                val updatedMovies = mutableListOf<org.mobyle.domain.model.Movie>()
                 filmowList.movies.forEachIndexed { index, movie ->
-                    if (movie.id == 0) return@forEachIndexed
                     val movieDbId = ensureMovie(movie)
+                    updatedMovies += movie.copy(id = movieDbId)
 
                     UserListItemsTable.upsert(UserListItemsTable.listId, UserListItemsTable.movieId) {
                         it[UserListItemsTable.listId] = listId
@@ -514,7 +522,10 @@ class UserDatabaseDataSourceImpl(
                         it[addedAt] = now
                     }
                 }
+
+                result += filmowList.copy(movies = updatedMovies)
             }
         }
+        return result
     }
 }

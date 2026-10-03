@@ -578,30 +578,91 @@ def scrape_lists(session, username, errors):
 
 
 def fetch_detail_data(session, href, errors):
-    """Fetch the movie detail page and extract watched date and poster URL."""
+    """Fetch the movie detail page and extract all available movie data.
+
+    Returns a dict with any of the following keys (only non-null values included):
+        watchedAt   – ISO-8601 date the user watched the movie
+        posterUrl   – full-resolution poster URL
+        imdbUrl     – IMDB URL from sameAs in JSON-LD
+        overview    – plot description (Portuguese)
+        releaseDate – ISO date "YYYY-MM-DD" from datePublished
+        runtime     – int, duration in minutes
+        director    – str, first director name
+        genres      – list[str], genre names
+    """
     if not href:
-        return None, None
+        return {}
     url = f"{BASE_URL}{href}"
     try:
         soup = get_page(session, url)
 
-        watched_at = None
+        result = {}
+
         el = soup.select_one('[id="watched-in"]')
         if el:
             raw = el.get("datetime") or el.get("value") or el.get_text(strip=True)
             watched_at = parse_date_str(raw)
+            if watched_at:
+                result["watchedAt"] = watched_at
 
-        poster_url = None
         poster_wrapper = soup.select_one(".movie__poster-wrapper")
         if poster_wrapper:
             first_link = poster_wrapper.select_one("a[href]")
             if first_link:
-                poster_url = first_link.get("href")
+                result["posterUrl"] = first_link.get("href")
 
-        return watched_at, poster_url
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(script.string or "")
+                if data.get("@type") != "Movie":
+                    continue
+
+                same_as = data.get("sameAs", [])
+                if isinstance(same_as, list):
+                    imdb_url = next((u for u in same_as if "imdb.com" in u), None)
+                elif isinstance(same_as, str) and "imdb.com" in same_as:
+                    imdb_url = same_as
+                else:
+                    imdb_url = None
+                if imdb_url:
+                    result["imdbUrl"] = imdb_url
+
+                description = (data.get("description") or "").strip()
+                if description:
+                    result["overview"] = description
+
+                date_published = (data.get("datePublished") or "").strip()
+                if date_published:
+                    result["releaseDate"] = date_published  # already ISO: YYYY-MM-DD
+
+                duration = data.get("duration") or ""
+                if duration:
+                    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?", duration)
+                    if m and (m.group(1) or m.group(2)):
+                        result["runtime"] = int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
+
+                directors = data.get("director", [])
+                if isinstance(directors, dict):
+                    directors = [directors]
+                director_names = [d["name"].strip() for d in directors if d.get("name")]
+                if director_names:
+                    result["director"] = director_names[0]
+
+                genres = data.get("genre", [])
+                if isinstance(genres, str):
+                    genres = [genres]
+                genres = [g.strip() for g in genres if g.strip()]
+                if genres:
+                    result["genres"] = genres
+
+                break
+            except Exception:
+                pass
+
+        return result
     except Exception as e:
         errors.append(f"fetch_detail_data {href} failed: {e}")
-        return None, None
+        return {}
 
 
 def scrape_profile(username, cookies_str=""):
@@ -616,10 +677,8 @@ def scrape_profile(username, cookies_str=""):
     t = time.time()
     log(f"[PHASE] fetching detail data for {len(recently_watched)} recently watched movies...")
     for movie in recently_watched:
-        watched_at, poster_url = fetch_detail_data(session, movie.get("href", ""), errors)
-        movie["watchedAt"] = watched_at
-        if poster_url:
-            movie["posterUrl"] = poster_url
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] recently watched detail data done in {time.time() - t:.1f}s")
 
     t = time.time()
@@ -630,10 +689,8 @@ def scrape_profile(username, cookies_str=""):
     t = time.time()
     log(f"[PHASE] fetching detail data for {len(watched)} movies...")
     for movie in watched:
-        watched_at, poster_url = fetch_detail_data(session, movie.get("href", ""), errors)
-        movie["watchedAt"] = watched_at
-        if poster_url:
-            movie["posterUrl"] = poster_url
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] detail data done in {time.time() - t:.1f}s")
 
     t = time.time()

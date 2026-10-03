@@ -31,12 +31,6 @@ class MoviesRepositoryImpl(
     }
 
     override suspend fun getMovieDetail(movieId: Int): MovieDetail {
-        // If negative ID, resolve to real TMDB ID first
-        if (movieId < 0) {
-            val resolved = resolveNegativeId(movieId)
-            if (resolved != null) return resolved
-        }
-
         val local = movieCatalogDataSource.getLocalMovieDetail(movieId)
         if (local != null) {
             // Check if similars/providers need refresh
@@ -56,99 +50,87 @@ class MoviesRepositoryImpl(
         return fetchAndCacheDetail(movieId)
     }
 
-    override suspend fun lookupMovieDetail(movieId: Int?, filmowId: String?, title: String?): MovieDetail? {
-        // 1. By TMDB ID (positive)
-        if (movieId != null && movieId > 0) {
-            return getMovieDetail(movieId)
+    override suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?): MovieDetail? {
+        // 1. Search DB by any provided identifier (id has highest priority)
+        val localMovie = when {
+            id != null -> movieCatalogDataSource.findById(id)
+            tmdbId != null -> movieCatalogDataSource.findByTmdbId(tmdbId)
+            filmowId != null -> movieCatalogDataSource.findByFilmowId(filmowId)
+            else -> null
         }
 
-        // 2. By filmowId → find in local DB, then search TMDB by title
-        if (filmowId != null) {
-            val movie = movieCatalogDataSource.findByFilmowId(filmowId)
-            println("[LOOKUP] filmowId=$filmowId → DB result: ${movie?.title} (id=${movie?.id})")
-            if (movie != null) {
-                val year = movie.releaseDate?.take(4)?.toIntOrNull()
-                val searchResult = tmdbDataSource.searchMovies(movie.title, page = 1, year = year)
-                println("[LOOKUP] TMDB search '${movie.title}' year=$year → ${searchResult.results.size} results")
-                val bestMatch = searchResult.results.firstOrNull()
-                if (bestMatch != null) return getMovieDetail(bestMatch.id)
-
-                val localTitle = movie.localTitle
-                if (localTitle != null) {
-                    val fallbackResult = tmdbDataSource.searchMovies(localTitle, page = 1, year = year)
-                    println("[LOOKUP] TMDB fallback search '${localTitle}' year=$year → ${fallbackResult.results.size} results")
-                    val fallbackMatch = fallbackResult.results.firstOrNull()
-                    if (fallbackMatch != null) return getMovieDetail(fallbackMatch.id)
-                }
-            }
+        // 2. Found in DB with tmdbId — return local enriched detail
+        if (localMovie?.tmdbId != null) {
+            val local = movieCatalogDataSource.getLocalMovieDetail(localMovie.tmdbId)
+            if (local != null) return local.copy(id = localMovie.id)
         }
 
-        // 3. By negative TMDB ID (from scraper hash)
-        if (movieId != null && movieId < 0) {
-            val resolved = resolveNegativeId(movieId)
-            if (resolved != null) return resolved
+        // 3. Not enriched locally — fetch from TMDB
+        val fetchTmdbId = tmdbId ?: localMovie?.tmdbId
+        if (fetchTmdbId != null) {
+            val detail = fetchAndCacheDetail(fetchTmdbId)
+            val dbId = localMovie?.id ?: movieCatalogDataSource.findByTmdbId(fetchTmdbId)?.id ?: detail.id
+            val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie?.overview ?: ""
+            return detail.copy(id = dbId, overview = overview)
         }
 
-        // 4. By title → try local DB first, then TMDB
-        if (title != null) {
-            val localMovie = movieCatalogDataSource.findByTitle(title)
-            if (localMovie != null) {
-                if (localMovie.id > 0) return getMovieDetail(localMovie.id)
-                val resolved = resolveNegativeId(localMovie.id)
-                if (resolved != null) return resolved
+        // 4. Found in DB but no tmdbId — resolve via TMDB title search
+        if (localMovie != null) {
+            val resolveFilmowId = filmowId ?: localMovie.filmowId
+            val year = localMovie.releaseDate?.take(4)?.toIntOrNull()
+
+            suspend fun resolveMatch(searchTitle: String): MovieDetail? {
+                val match = tmdbDataSource.searchMovies(searchTitle, page = 1, year = year)
+                    .results.firstOrNull() ?: return null
+                if (resolveFilmowId != null) resolveFilmowPlaceholder(resolveFilmowId, localMovie.tmdbId, match.id)
+                val detail = fetchAndCacheDetail(match.id)
+                val dbId = movieCatalogDataSource.findByTmdbId(match.id)?.id ?: detail.id
+                val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie.overview
+                return detail.copy(id = dbId, overview = overview)
             }
 
-            val searchResult = tmdbDataSource.searchMovies(title, page = 1)
-            val bestMatch = searchResult.results.firstOrNull() ?: return null
-            return getMovieDetail(bestMatch.id)
+            return resolveMatch(localMovie.title)
+                ?: localMovie.localTitle?.let { resolveMatch(it) }
         }
 
         return null
     }
 
-    private suspend fun resolveNegativeId(negativeId: Int): MovieDetail? {
-        val movie = movieCatalogDataSource.findByTmdbId(negativeId) ?: return null
-
-        val year = movie.releaseDate?.take(4)?.toIntOrNull()
-        val searchResult = tmdbDataSource.searchMovies(movie.title, page = 1, year = year)
-        val bestMatch = searchResult.results.firstOrNull() ?: return null
-
-        // Resolve the placeholder
-        val dbId = movieCatalogDataSource.getDbIdByFilmowId(movie.filmowId ?: "")
-        if (dbId != null) {
-            movieCatalogDataSource.resolveScrapedMovie(
-                oldDbId = dbId,
-                realTmdbId = bestMatch.id,
-                filmowId = movie.filmowId
-            )
-        }
-
-        return fetchAndCacheDetail(bestMatch.id)
+    private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
+        if (currentTmdbId == realTmdbId) return
+        val dbId = movieCatalogDataSource.getDbIdByFilmowId(filmowId) ?: return
+        movieCatalogDataSource.resolveScrapedMovie(oldDbId = dbId, realTmdbId = realTmdbId, filmowId = filmowId)
     }
 
     private suspend fun fetchAndCacheDetail(tmdbId: Int): MovieDetail {
         val response = tmdbDataSource.getMovieDetail(tmdbId)
         val detail = response.toDomain()
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                movieCatalogDataSource.upsertMovie(
-                    Movie(
-                        id = tmdbId, title = detail.title, originalTitle = detail.originalTitle,
-                        overview = detail.overview,
-                        posterPath = detail.posterPath, backdropPath = detail.backdropPath,
-                        voteAverage = detail.voteAverage, releaseDate = detail.releaseDate
-                    )
+        val dbId = try {
+            val id = movieCatalogDataSource.upsertMovie(
+                Movie(
+                    tmdbId = tmdbId, title = detail.title, originalTitle = detail.originalTitle,
+                    overview = detail.overview,
+                    posterPath = detail.posterPath, backdropPath = detail.backdropPath,
+                    voteAverage = detail.voteAverage, releaseDate = detail.releaseDate
                 )
-                movieCatalogDataSource.enrichMovie(tmdbId, detail, response.credits)
-                movieCatalogDataSource.saveSimilarMovies(tmdbId, detail.similarMovies)
-                movieCatalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
-            } catch (e: Exception) {
-                log.warn("Failed to cache movie detail $tmdbId: ${e.message}")
+            )
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    movieCatalogDataSource.enrichMovie(tmdbId, detail, response.credits)
+                    movieCatalogDataSource.saveSimilarMovies(tmdbId, detail.similarMovies)
+                    movieCatalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
+                } catch (e: Exception) {
+                    log.warn("Failed to enrich movie detail $tmdbId: ${e.message}")
+                }
             }
+            id
+        } catch (e: Exception) {
+            log.warn("Failed to cache movie detail $tmdbId: ${e.message}")
+            0L
         }
 
-        return detail
+        return detail.copy(id = dbId)
     }
 
     private fun refreshVolatileData(tmdbId: Int) {
@@ -191,7 +173,7 @@ class MoviesRepositoryImpl(
     private fun cacheMovieListAsync(movies: List<Movie>) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                movieCatalogDataSource.cacheMovieList(movies)
+                movieCatalogDataSource.cacheMovieListWithIds(movies)
             } catch (e: Exception) {
                 log.warn("Failed to cache movie list: ${e.message}")
             }

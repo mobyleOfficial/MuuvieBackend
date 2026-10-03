@@ -27,15 +27,11 @@ fun Route.getMoviesRouting() {
     val lookupMovieDetail by injection<LookupMovieDetail>()
 
     get("/movies") {
+        val id = call.parameters["id"]?.toLongOrNull()
+        val tmdbId = call.parameters["tmdbId"]?.toIntOrNull()
         val filmowId = call.parameters["filmowId"]
-        val title = call.parameters["title"]
 
-        if (filmowId == null && title == null) {
-            call.respond(HttpStatusCode.BadRequest, "Query parameter 'filmowId' or 'title' is required")
-            return@get
-        }
-
-        val detail = lookupMovieDetail(null, filmowId, title)
+        val detail = lookupMovieDetail(id, tmdbId, filmowId)
         if (detail == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
         } else {
@@ -97,23 +93,12 @@ fun Route.getMoviesRouting() {
     }
 
     get("/movies/{id}") {
-        val filmowId = call.parameters["filmowId"]
-        if (filmowId != null) {
-            val detail = lookupMovieDetail(null, filmowId, null)
-            if (detail == null) {
-                call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
-            } else {
-                call.respond(detail)
-            }
-            return@get
-        }
-
-        val movieId = call.parameters["id"]?.toIntOrNull()
-        if (movieId == null) {
+        val tmdbId = call.parameters["id"]?.toIntOrNull()
+        if (tmdbId == null) {
             call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
             return@get
         }
-        val detail = lookupMovieDetail(movieId, null, null)
+        val detail = lookupMovieDetail(null, tmdbId, null)
         if (detail == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
         } else {

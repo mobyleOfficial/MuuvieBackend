@@ -29,7 +29,7 @@ class MovieEnrichmentService(
                 if (candidate.needsResolution) {
                     resolveAndEnrich(candidate)
                 } else {
-                    enrichFromTmdb(candidate.tmdbId)
+                    enrichFromTmdb(candidate.tmdbId!!)
                 }
                 enriched++
                 delay(DELAY_BETWEEN_CALLS_MS)

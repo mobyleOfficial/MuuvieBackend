@@ -9,6 +9,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.mobyle.domain.model.FilmowList
+import org.mobyle.domain.model.FilmowMoviePartial
 import org.mobyle.domain.model.FilmowProfile
 import org.mobyle.domain.model.Movie
 import org.slf4j.LoggerFactory
@@ -86,56 +87,86 @@ class FilmowDataSourceImpl : FilmowDataSource {
             throw RuntimeException("Filmow scraper error: $errorMsg")
         }
 
+        val (recentlyWatched, details1) = parseMovieListLight(obj["recentlyWatched"])
+        val (watched, details2) = parseMovieListLight(obj["watched"])
+        val (watchlist, _) = parseMovieListLight(obj["watchlist"])
+        val (favorites, _) = parseMovieListLight(obj["favorites"])
+
         return FilmowProfile(
             username = obj["username"]?.jsonPrimitive?.content ?: "",
             displayName = obj["displayName"]?.jsonPrimitive?.content ?: "",
             watchedCount = obj["watchedCount"]?.jsonPrimitive?.intOrNull ?: 0,
-            recentlyWatched = parseMovieListLight(obj["recentlyWatched"]),
-            watched = parseMovieListLight(obj["watched"]),
-            watchlist = parseMovieListLight(obj["watchlist"]),
-            favorites = parseMovieListLight(obj["favorites"]),
+            recentlyWatched = recentlyWatched,
+            watched = watched,
+            watchlist = watchlist,
+            favorites = favorites,
             lists = parseListList(obj["lists"]),
             errors = obj["errors"]?.jsonArray
                 ?.map { it.jsonPrimitive.content }
-                ?: emptyList()
+                ?: emptyList(),
+            filmowDetails = details1 + details2
         )
     }
 
     /**
      * Parses movies from scraped JSON without external API calls.
+     * Returns (movies, filmowId → FilmowMoviePartial) where the partial carries
+     * detail-page data (imdbUrl, runtime, director, genres) that is stored in the
+     * DB but never serialized to API responses.
      */
-    private fun parseMovieListLight(element: kotlinx.serialization.json.JsonElement?): List<Movie> {
-        if (element == null || element !is JsonArray) return emptyList()
+    private fun parseMovieListLight(
+        element: kotlinx.serialization.json.JsonElement?
+    ): Pair<List<Movie>, Map<String, FilmowMoviePartial>> {
+        if (element == null || element !is JsonArray) return Pair(emptyList(), emptyMap())
 
-        return element.mapNotNull { item ->
+        val movies = mutableListOf<Movie>()
+        val partials = mutableMapOf<String, FilmowMoviePartial>()
+
+        for (item in element) {
             try {
-                val movie = item.jsonObject
-                val rawTitle = movie["title"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val year = movie["year"]?.jsonPrimitive?.content
+                val obj = item.jsonObject
+                val rawTitle = obj["title"]?.jsonPrimitive?.content ?: continue
+                val year = obj["year"]?.jsonPrimitive?.content
                 val cleanTitle = rawTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-                val filmowId = movie["filmowId"]?.jsonPrimitive?.content
-                val posterUrl = movie["posterUrl"]?.jsonPrimitive?.content
-                val movieId = filmowId?.toIntOrNull()?.let { -it }
-                    ?: -(cleanTitle + (year ?: "") + (posterUrl ?: "")).hashCode().and(Int.MAX_VALUE)
+                val filmowId = obj["filmowId"]?.jsonPrimitive?.content
+                val posterUrl = obj["posterUrl"]?.jsonPrimitive?.content
 
-                Movie(
-                    id = movieId,
+                // Fields enriched from the detail page (only present for watched/recentlyWatched)
+                val imdbUrl = obj["imdbUrl"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
+                val runtime = obj["runtime"]?.takeIf { it != JsonNull }?.jsonPrimitive?.intOrNull
+                val director = obj["director"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
+                val genres = (obj["genres"]?.takeIf { it is JsonArray } as? JsonArray)
+                    ?.mapNotNull { it.jsonPrimitive.content.takeIf(String::isNotBlank) }
+                    ?: emptyList()
+
+                if (filmowId != null && (imdbUrl != null || runtime != null || director != null || genres.isNotEmpty())) {
+                    partials[filmowId] = FilmowMoviePartial(
+                        imdbUrl = imdbUrl,
+                        runtime = runtime,
+                        director = director,
+                        genres = genres
+                    )
+                }
+
+                movies += Movie(
                     title = cleanTitle,
-                    localTitle = movie["localTitle"]?.jsonPrimitive?.content,
-                    originalTitle = movie["originalTitle"]?.jsonPrimitive?.content,
-                    overview = "",
+                    localTitle = obj["localTitle"]?.jsonPrimitive?.content,
+                    originalTitle = obj["originalTitle"]?.jsonPrimitive?.content,
+                    overview = obj["overview"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content ?: "",
                     posterPath = posterUrl,
-                    voteAverage = movie["voteAverage"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                    userRating = movie["userRating"]?.jsonPrimitive?.doubleOrNull,
+                    voteAverage = obj["voteAverage"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
+                    userRating = obj["userRating"]?.jsonPrimitive?.doubleOrNull,
+                    releaseDate = obj["releaseDate"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content,
                     filmowId = filmowId,
-                    watchedAt = movie["watchedAt"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
+                    watchedAt = obj["watchedAt"]?.takeIf { it != JsonNull }?.jsonPrimitive?.content
                 )
             } catch (e: Exception) {
                 log.warn("Failed to parse movie item: ${e.message}")
-                null
             }
         }
+
+        return Pair(movies, partials)
     }
 
     private fun parseListList(element: kotlinx.serialization.json.JsonElement?): List<FilmowList> {
@@ -150,7 +181,7 @@ class FilmowDataSourceImpl : FilmowDataSource {
                     description = list["description"]?.jsonPrimitive?.content,
                     filmowUrl = list["filmowUrl"]?.jsonPrimitive?.content ?: "",
                     coverUrl = list["coverUrl"]?.jsonPrimitive?.content,
-                    movies = parseMovieListLight(list["movies"])
+                    movies = parseMovieListLight(list["movies"]).first
                 )
             } catch (e: Exception) {
                 log.warn("Failed to parse list item: ${e.message}")

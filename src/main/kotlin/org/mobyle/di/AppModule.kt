@@ -62,7 +62,7 @@ val appModule = module {
 
     // Filmow use cases
     factory { ScrapeFilmowProfile(repository = get()) }
-    factory { ImportFilmowData(userDatabaseDataSource = get()) }
+    factory { ImportFilmowData(userDatabaseDataSource = get(), movieCatalogDataSource = get()) }
 
     // Auth use cases
     factory { ProcessOAuthCallback(authRepository = get<AuthRepository>()) }

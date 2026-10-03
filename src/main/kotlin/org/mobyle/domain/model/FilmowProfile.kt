@@ -1,6 +1,7 @@
 package org.mobyle.domain.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class FilmowList(
@@ -11,6 +12,14 @@ data class FilmowList(
     val coverUrl: String? = null,
     val movies: List<Movie> = emptyList(),
     val movieCount: Int = movies.size
+)
+
+/** Extra data extracted from Filmow detail pages. Not serialized in API responses. */
+data class FilmowMoviePartial(
+    val imdbUrl: String? = null,
+    val runtime: Int? = null,
+    val director: String? = null,
+    val genres: List<String> = emptyList()
 )
 
 @Serializable
@@ -28,5 +37,7 @@ data class FilmowProfile(
     val favoritesCount: Int = favorites.size,
     val lists: List<FilmowList> = emptyList(),
     val listsCount: Int = lists.size,
-    val errors: List<String> = emptyList()
+    val errors: List<String> = emptyList(),
+    /** filmowId → partial detail; excluded from serialization, never returned by the API. */
+    @Transient val filmowDetails: Map<String, FilmowMoviePartial> = emptyMap()
 )
