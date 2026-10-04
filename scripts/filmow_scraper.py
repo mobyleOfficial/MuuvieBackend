@@ -699,14 +699,37 @@ def scrape_profile(username, cookies_str=""):
     log(f"[PHASE] filmes/quero-ver done: {len(watchlist)} movies in {time.time() - t:.1f}s")
 
     t = time.time()
+    log(f"[PHASE] fetching detail data for {len(watchlist)} watchlist movies...")
+    for movie in watchlist:
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] watchlist detail data done in {time.time() - t:.1f}s")
+
+    t = time.time()
     log(f"[PHASE] scrape_section filmes/favoritos...")
     favorites = scrape_section(session, username, "filmes", "favoritos", errors)
     log(f"[PHASE] filmes/favoritos done: {len(favorites)} movies in {time.time() - t:.1f}s")
 
     t = time.time()
+    log(f"[PHASE] fetching detail data for {len(favorites)} favorites movies...")
+    for movie in favorites:
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] favorites detail data done in {time.time() - t:.1f}s")
+
+    t = time.time()
     log(f"[PHASE] scrape_lists...")
     user_lists = scrape_lists(session, username, errors)
     log(f"[PHASE] scrape_lists done: {len(user_lists)} lists in {time.time() - t:.1f}s")
+
+    t = time.time()
+    list_movie_count = sum(len(lst.get("movies", [])) for lst in user_lists)
+    log(f"[PHASE] fetching detail data for {list_movie_count} list movies...")
+    for lst in user_lists:
+        for movie in lst.get("movies", []):
+            detail = fetch_detail_data(session, movie.get("href", ""), errors)
+            movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] list movies detail data done in {time.time() - t:.1f}s")
 
     log(f"[PHASE] Total scrape time: {time.time() - t_start:.1f}s")
 

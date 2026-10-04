@@ -74,23 +74,11 @@ class MoviesRepositoryImpl(
             return detail.copy(id = dbId, overview = overview)
         }
 
-        // 4. Found in DB but no tmdbId — resolve via TMDB title search
+        // 4. Found in DB but no tmdbId — return scraped local data directly.
+        // Background enrichment (MovieEnrichmentService) will resolve tmdbId over time;
+        // once resolved, subsequent calls will hit step 2 above.
         if (localMovie != null) {
-            val resolveFilmowId = filmowId ?: localMovie.filmowId
-            val year = localMovie.releaseDate?.take(4)?.toIntOrNull()
-
-            suspend fun resolveMatch(searchTitle: String): MovieDetail? {
-                val match = tmdbDataSource.searchMovies(searchTitle, page = 1, year = year)
-                    .results.firstOrNull() ?: return null
-                if (resolveFilmowId != null) resolveFilmowPlaceholder(resolveFilmowId, localMovie.tmdbId, match.id)
-                val detail = fetchAndCacheDetail(match.id)
-                val dbId = movieCatalogDataSource.findByTmdbId(match.id)?.id ?: detail.id
-                val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie.overview
-                return detail.copy(id = dbId, overview = overview)
-            }
-
-            return resolveMatch(localMovie.title)
-                ?: localMovie.localTitle?.let { resolveMatch(it) }
+            return movieCatalogDataSource.getLocalMovieDetailByDbId(localMovie.id)
         }
 
         return null

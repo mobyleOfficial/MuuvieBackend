@@ -46,43 +46,31 @@ class MovieEnrichmentService(
     }
 
     private suspend fun resolveAndEnrich(candidate: EnrichmentCandidate) {
-        val bestMatch = searchWithFallback(candidate)
-        if (bestMatch == null) {
-            log.warn("[ENRICHMENT] No TMDB match for '${candidate.title}' / '${candidate.originalTitle}' year=${candidate.year} (filmowId=${candidate.filmowId})")
+        val imdbId = extractImdbId(candidate.imdbUrl)
+        if (imdbId == null) {
+            log.info("[ENRICHMENT] No IMDb ID for '${candidate.title}' (filmowId=${candidate.filmowId}) — skipping resolution")
+            return
+        }
+
+        val tmdbId = tmdbDataSource.findByImdbId(imdbId).movieResults.firstOrNull()?.id
+        if (tmdbId == null) {
+            log.warn("[ENRICHMENT] TMDB has no match for IMDb ID $imdbId ('${candidate.title}')")
             return
         }
 
         catalogDataSource.resolveScrapedMovie(
             oldDbId = candidate.dbId,
-            realTmdbId = bestMatch,
+            realTmdbId = tmdbId,
             filmowId = candidate.filmowId
         )
 
-        enrichFromTmdb(bestMatch)
+        enrichFromTmdb(tmdbId)
     }
 
-    private suspend fun searchWithFallback(candidate: EnrichmentCandidate): Int? {
-        // 1. Search with title (default language pt-BR)
-        val result1 = tmdbDataSource.searchMovies(candidate.title, page = 1, year = candidate.year)
-        if (result1.results.isNotEmpty()) return result1.results.first().id
-
-        // 2. Search with originalTitle if different from title
-        if (!candidate.originalTitle.isNullOrBlank() && candidate.originalTitle != candidate.title) {
-            val result2 = tmdbDataSource.searchMovies(candidate.originalTitle, page = 1, year = candidate.year)
-            if (result2.results.isNotEmpty()) return result2.results.first().id
-        }
-
-        // 3. Retry title without language filter (multilingual search)
-        val result3 = tmdbDataSource.searchMovies(candidate.title, page = 1, year = candidate.year, language = "en-US")
-        if (result3.results.isNotEmpty()) return result3.results.first().id
-
-        // 4. Last resort: originalTitle without language filter
-        if (!candidate.originalTitle.isNullOrBlank() && candidate.originalTitle != candidate.title) {
-            val result4 = tmdbDataSource.searchMovies(candidate.originalTitle, page = 1, year = candidate.year, language = "en-US")
-            if (result4.results.isNotEmpty()) return result4.results.first().id
-        }
-
-        return null
+    private fun extractImdbId(imdbUrl: String?): String? {
+        if (imdbUrl.isNullOrBlank()) return null
+        // Matches tt followed by digits anywhere in the URL, e.g. https://www.imdb.com/title/tt0118694/
+        return Regex("(tt\\d+)").find(imdbUrl)?.value
     }
 
     private suspend fun enrichFromTmdb(tmdbId: Int) {

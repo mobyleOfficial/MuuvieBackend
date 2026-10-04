@@ -41,6 +41,8 @@ object MoviesTable : LongIdTable("movies") {
     val enrichedAt = timestamp("enriched_at").nullable()
     val needsEnrichment = bool("needs_enrichment").default(true)
     val imdbUrl = varchar("imdb_url", 500).nullable()
+    val director = varchar("director", 255).nullable()
+    val filmowGenres = text("filmow_genres").nullable() // comma-separated genre names from Filmow
 }
 
 object GenresTable : LongIdTable("genres") {

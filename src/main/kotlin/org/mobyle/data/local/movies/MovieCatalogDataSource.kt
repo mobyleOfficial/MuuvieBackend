@@ -21,6 +21,7 @@ interface MovieCatalogDataSource {
     fun resolveScrapedMovie(oldDbId: Long, realTmdbId: Int, filmowId: String?)
     fun getMoviesNeedingEnrichment(limit: Int = 50): List<EnrichmentCandidate>
     fun getLocalMovieDetail(tmdbId: Int): MovieDetail?
+    fun getLocalMovieDetailByDbId(dbId: Long): MovieDetail?
     fun findByTitle(title: String): Movie?
     /** Upserts movies by tmdbId and returns them with their DB-assigned [Movie.id]. */
     fun cacheMovieListWithIds(movies: List<Movie>): List<Movie>
@@ -37,7 +38,9 @@ data class EnrichmentCandidate(
     val tmdbId: Int?,
     val title: String,
     val originalTitle: String?,
+    val localTitle: String?,
     val year: Int?,
     val filmowId: String?,
+    val imdbUrl: String?,
     val needsResolution: Boolean
 )

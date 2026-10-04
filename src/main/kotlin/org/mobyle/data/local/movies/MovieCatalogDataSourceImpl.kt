@@ -236,8 +236,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                         tmdbId = tmdbId,
                         title = row[MoviesTable.title],
                         originalTitle = row[MoviesTable.originalTitle],
+                        localTitle = row[MoviesTable.localTitle],
                         year = row[MoviesTable.year],
                         filmowId = row[MoviesTable.filmowId],
+                        imdbUrl = row[MoviesTable.imdbUrl],
                         needsResolution = tmdbId == null
                     )
                 }
@@ -548,8 +550,103 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 MoviesTable.update({ MoviesTable.filmowId eq filmowId }) {
                     if (partial.imdbUrl != null) it[imdbUrl] = partial.imdbUrl
                     if (partial.runtime != null) it[runtime] = partial.runtime
+                    if (partial.director != null) it[director] = partial.director
+                    if (partial.genres.isNotEmpty()) it[filmowGenres] = partial.genres.joinToString(",")
                 }
             }
+        }
+    }
+
+    override fun getLocalMovieDetailByDbId(dbId: Long): MovieDetail? {
+        return transaction {
+            val row = MoviesTable.selectAll()
+                .where { MoviesTable.id eq dbId }
+                .firstOrNull() ?: return@transaction null
+
+            // Prefer TMDB-sourced genres/cast if enriched, fall back to Filmow-scraped data
+            val tmdbId = row[MoviesTable.tmdbId]
+
+            val genres = if (tmdbId != null) {
+                (MovieGenresTable innerJoin GenresTable)
+                    .selectAll()
+                    .where { MovieGenresTable.movieId eq dbId }
+                    .map { it[GenresTable.name] }
+                    .ifEmpty { row[MoviesTable.filmowGenres]?.split(",")?.map { it.trim() } ?: emptyList() }
+            } else {
+                row[MoviesTable.filmowGenres]?.split(",")?.map { it.trim() } ?: emptyList()
+            }
+
+            val director = if (tmdbId != null) {
+                (MovieCastTable innerJoin PeopleTable)
+                    .selectAll()
+                    .where {
+                        (MovieCastTable.movieId eq dbId) and
+                            (MovieCastTable.role eq "director")
+                    }
+                    .firstOrNull()
+                    ?.get(PeopleTable.name)
+                    ?: row[MoviesTable.director]
+            } else {
+                row[MoviesTable.director]
+            }
+
+            val cast = if (tmdbId != null) {
+                (MovieCastTable innerJoin PeopleTable)
+                    .selectAll()
+                    .where {
+                        (MovieCastTable.movieId eq dbId) and
+                            (MovieCastTable.role eq "actor")
+                    }
+                    .orderBy(MovieCastTable.position, SortOrder.ASC)
+                    .limit(10)
+                    .map { it[PeopleTable.name] }
+            } else {
+                emptyList()
+            }
+
+            val similars = MovieSimilarsTable.selectAll()
+                .where { MovieSimilarsTable.movieId eq dbId }
+                .map { r ->
+                    Movie(
+                        tmdbId = r[MovieSimilarsTable.similarTmdbId],
+                        title = r[MovieSimilarsTable.title],
+                        posterPath = r[MovieSimilarsTable.posterPath],
+                        voteAverage = r[MovieSimilarsTable.voteAverage]?.toDouble() ?: 0.0,
+                        releaseDate = r[MovieSimilarsTable.releaseDate]
+                    )
+                }
+
+            val providers = MovieWatchProvidersTable.selectAll()
+                .where { MovieWatchProvidersTable.movieId eq dbId }
+                .map { r ->
+                    WatchProvider(
+                        name = r[MovieWatchProvidersTable.providerName],
+                        logoPath = r[MovieWatchProvidersTable.logoPath]
+                    )
+                }
+
+            MovieDetail(
+                id = dbId,
+                tmdbId = tmdbId,
+                title = row[MoviesTable.title],
+                originalTitle = row[MoviesTable.originalTitle],
+                overview = row[MoviesTable.overview] ?: "",
+                posterPath = row[MoviesTable.posterPath],
+                backdropPath = row[MoviesTable.backdropPath],
+                voteAverage = row[MoviesTable.voteAverage]?.toDouble() ?: 0.0,
+                releaseDate = row[MoviesTable.releaseDate],
+                tagline = row[MoviesTable.tagline],
+                runtime = row[MoviesTable.runtime],
+                genres = genres,
+                director = director,
+                cast = cast,
+                watchProviders = providers,
+                similarMovies = similars,
+                popularReviews = emptyList(),
+                reviewCount = 0,
+                listCount = 0,
+                likeCount = 0
+            )
         }
     }
 

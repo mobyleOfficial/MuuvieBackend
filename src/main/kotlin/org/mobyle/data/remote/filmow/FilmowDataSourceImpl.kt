@@ -89,8 +89,9 @@ class FilmowDataSourceImpl : FilmowDataSource {
 
         val (recentlyWatched, details1) = parseMovieListLight(obj["recentlyWatched"])
         val (watched, details2) = parseMovieListLight(obj["watched"])
-        val (watchlist, _) = parseMovieListLight(obj["watchlist"])
-        val (favorites, _) = parseMovieListLight(obj["favorites"])
+        val (watchlist, details3) = parseMovieListLight(obj["watchlist"])
+        val (favorites, details4) = parseMovieListLight(obj["favorites"])
+        val (lists, details5) = parseListList(obj["lists"])
 
         return FilmowProfile(
             username = obj["username"]?.jsonPrimitive?.content ?: "",
@@ -100,11 +101,11 @@ class FilmowDataSourceImpl : FilmowDataSource {
             watched = watched,
             watchlist = watchlist,
             favorites = favorites,
-            lists = parseListList(obj["lists"]),
+            lists = lists,
             errors = obj["errors"]?.jsonArray
                 ?.map { it.jsonPrimitive.content }
                 ?: emptyList(),
-            filmowDetails = details1 + details2
+            filmowDetails = details1 + details2 + details3 + details4 + details5
         )
     }
 
@@ -169,25 +170,31 @@ class FilmowDataSourceImpl : FilmowDataSource {
         return Pair(movies, partials)
     }
 
-    private fun parseListList(element: kotlinx.serialization.json.JsonElement?): List<FilmowList> {
-        if (element == null || element !is JsonArray) return emptyList()
+    private fun parseListList(
+        element: kotlinx.serialization.json.JsonElement?
+    ): Pair<List<FilmowList>, Map<String, FilmowMoviePartial>> {
+        if (element == null || element !is JsonArray) return Pair(emptyList(), emptyMap())
 
-        return element.mapNotNull { item ->
+        val allPartials = mutableMapOf<String, FilmowMoviePartial>()
+        val lists = element.mapNotNull { item ->
             try {
                 val list = item.jsonObject
+                val (movies, partials) = parseMovieListLight(list["movies"])
+                allPartials += partials
                 FilmowList(
                     filmowId = list["filmowId"]?.jsonPrimitive?.content ?: return@mapNotNull null,
                     title = list["title"]?.jsonPrimitive?.content ?: return@mapNotNull null,
                     description = list["description"]?.jsonPrimitive?.content,
                     filmowUrl = list["filmowUrl"]?.jsonPrimitive?.content ?: "",
                     coverUrl = list["coverUrl"]?.jsonPrimitive?.content,
-                    movies = parseMovieListLight(list["movies"]).first
+                    movies = movies
                 )
             } catch (e: Exception) {
                 log.warn("Failed to parse list item: ${e.message}")
                 null
             }
         }
+        return Pair(lists, allPartials)
     }
 
     private fun resolveVenvPython(): String {
