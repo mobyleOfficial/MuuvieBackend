@@ -94,6 +94,9 @@ class MoviesRepositoryImpl(
         val response = tmdbDataSource.getMovieDetail(tmdbId)
         val detail = response.toDomain()
 
+        // Save similar movies synchronously so they get DB ids in this response
+        val similarsWithIds = cacheAndAssignIds(detail.similarMovies)
+
         val dbId = try {
             val id = movieCatalogDataSource.upsertMovie(
                 Movie(
@@ -106,7 +109,7 @@ class MoviesRepositoryImpl(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     movieCatalogDataSource.enrichMovie(tmdbId, detail, response.credits)
-                    movieCatalogDataSource.saveSimilarMovies(tmdbId, detail.similarMovies)
+                    movieCatalogDataSource.saveSimilarMovies(tmdbId, similarsWithIds)
                     movieCatalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
                 } catch (e: Exception) {
                     log.warn("Failed to enrich movie detail $tmdbId: ${e.message}")
@@ -118,7 +121,7 @@ class MoviesRepositoryImpl(
             0L
         }
 
-        return detail.copy(id = dbId)
+        return detail.copy(id = dbId, similarMovies = similarsWithIds)
     }
 
     private fun refreshVolatileData(tmdbId: Int) {

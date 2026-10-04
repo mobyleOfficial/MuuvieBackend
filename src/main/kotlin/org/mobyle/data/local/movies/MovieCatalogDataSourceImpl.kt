@@ -287,17 +287,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .limit(10)
                 .map { it[PeopleTable.name] }
 
-            val similars = MovieSimilarsTable.selectAll()
-                .where { MovieSimilarsTable.movieId eq movieDbId }
-                .map { r ->
-                    Movie(
-                        tmdbId = r[MovieSimilarsTable.similarTmdbId],
-                        title = r[MovieSimilarsTable.title],
-                        posterPath = r[MovieSimilarsTable.posterPath],
-                        voteAverage = r[MovieSimilarsTable.voteAverage]?.toDouble() ?: 0.0,
-                        releaseDate = r[MovieSimilarsTable.releaseDate]
-                    )
-                }
+            val similars = resolveSimilarMovies(movieDbId)
 
             val providers = MovieWatchProvidersTable.selectAll()
                 .where { MovieWatchProvidersTable.movieId eq movieDbId }
@@ -342,15 +332,29 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
             val now = Clock.System.now()
             for (movie in similars) {
-                val tmdbId = movie.tmdbId ?: continue
+                val similarTmdbId = movie.tmdbId ?: continue
+
+                // Ensure the similar movie exists in MoviesTable so it gets a DB id
+                MoviesTable.upsert(MoviesTable.tmdbId) {
+                    it[MoviesTable.tmdbId] = similarTmdbId
+                    it[MoviesTable.title] = movie.title
+                    it[MoviesTable.originalTitle] = movie.originalTitle
+                    it[MoviesTable.posterPath] = movie.posterPath
+                    it[MoviesTable.backdropPath] = movie.backdropPath
+                    it[MoviesTable.voteAverage] = movie.voteAverage.takeIf { v -> v > 0.0 }?.toFloat()
+                    it[MoviesTable.releaseDate] = movie.releaseDate
+                    it[MoviesTable.year] = movie.releaseDate?.take(4)?.toIntOrNull()
+                    it[MoviesTable.needsEnrichment] = true
+                }
+
                 MovieSimilarsTable.upsert(MovieSimilarsTable.movieId, MovieSimilarsTable.similarTmdbId) {
-                    it[movieId] = movieDbId
-                    it[similarTmdbId] = tmdbId
-                    it[title] = movie.title
-                    it[posterPath] = movie.posterPath
-                    it[voteAverage] = movie.voteAverage.takeIf { v -> v > 0.0 }?.toFloat()
-                    it[releaseDate] = movie.releaseDate
-                    it[fetchedAt] = now
+                    it[MovieSimilarsTable.movieId] = movieDbId
+                    it[MovieSimilarsTable.similarTmdbId] = similarTmdbId
+                    it[MovieSimilarsTable.title] = movie.title
+                    it[MovieSimilarsTable.posterPath] = movie.posterPath
+                    it[MovieSimilarsTable.voteAverage] = movie.voteAverage.takeIf { v -> v > 0.0 }?.toFloat()
+                    it[MovieSimilarsTable.releaseDate] = movie.releaseDate
+                    it[MovieSimilarsTable.fetchedAt] = now
                 }
             }
         }
@@ -393,15 +397,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             val staleThreshold = Clock.System.now().minus(kotlin.time.Duration.parse("7d"))
             val isStale = oldestFetch < staleThreshold
 
-            val movies = rows.map { r ->
-                Movie(
-                    tmdbId = r[MovieSimilarsTable.similarTmdbId],
-                    title = r[MovieSimilarsTable.title],
-                    posterPath = r[MovieSimilarsTable.posterPath],
-                    voteAverage = r[MovieSimilarsTable.voteAverage]?.toDouble() ?: 0.0,
-                    releaseDate = r[MovieSimilarsTable.releaseDate]
-                )
-            }
+            val movies = resolveSimilarMovies(movieDbId)
             CachedData(movies, isStale)
         }
     }
@@ -544,6 +540,46 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
         }.value
     }
 
+    /**
+     * Loads similar movies for a given DB id, ensuring each has an entry in MoviesTable.
+     * Movies that exist only in MovieSimilarsTable (pre-fix cache) are upserted on the fly.
+     */
+    private fun resolveSimilarMovies(movieDbId: Long): List<Movie> {
+        val rows = MovieSimilarsTable.selectAll()
+            .where { MovieSimilarsTable.movieId eq movieDbId }
+            .toList()
+
+        if (rows.isEmpty()) return emptyList()
+
+        // Build a map of tmdbId -> existing DB id from MoviesTable
+        val similarTmdbIds = rows.map { it[MovieSimilarsTable.similarTmdbId] }
+        val existingIds: Map<Int, Long> = MoviesTable.selectAll()
+            .where { MoviesTable.tmdbId inList similarTmdbIds }
+            .associate { it[MoviesTable.tmdbId]!! to it[MoviesTable.id].value }
+
+        return rows.map { r ->
+            val similarTmdbId = r[MovieSimilarsTable.similarTmdbId]
+            val dbId = existingIds[similarTmdbId]
+                ?: MoviesTable.upsert(MoviesTable.tmdbId) {
+                    it[MoviesTable.tmdbId] = similarTmdbId
+                    it[MoviesTable.title] = r[MovieSimilarsTable.title]
+                    it[MoviesTable.posterPath] = r[MovieSimilarsTable.posterPath]
+                    it[MoviesTable.voteAverage] = r[MovieSimilarsTable.voteAverage]
+                    it[MoviesTable.releaseDate] = r[MovieSimilarsTable.releaseDate]
+                    it[MoviesTable.year] = r[MovieSimilarsTable.releaseDate]?.take(4)?.toIntOrNull()
+                    it[MoviesTable.needsEnrichment] = true
+                }[MoviesTable.id].value
+            Movie(
+                id = dbId,
+                tmdbId = similarTmdbId,
+                title = r[MovieSimilarsTable.title],
+                posterPath = r[MovieSimilarsTable.posterPath],
+                voteAverage = r[MovieSimilarsTable.voteAverage]?.toDouble() ?: 0.0,
+                releaseDate = r[MovieSimilarsTable.releaseDate]
+            )
+        }
+    }
+
     override fun saveFilmowPartials(details: Map<String, FilmowMoviePartial>) {
         if (details.isEmpty()) return
         transaction {
@@ -605,10 +641,13 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 emptyList()
             }
 
-            val similars = MovieSimilarsTable.selectAll()
+            val similars = MovieSimilarsTable
+                .join(MoviesTable, JoinType.LEFT, MovieSimilarsTable.similarTmdbId, MoviesTable.tmdbId)
+                .selectAll()
                 .where { MovieSimilarsTable.movieId eq dbId }
                 .map { r ->
                     Movie(
+                        id = r.getOrNull(MoviesTable.id)?.value ?: 0L,
                         tmdbId = r[MovieSimilarsTable.similarTmdbId],
                         title = r[MovieSimilarsTable.title],
                         posterPath = r[MovieSimilarsTable.posterPath],
