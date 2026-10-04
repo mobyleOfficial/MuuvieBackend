@@ -21,11 +21,18 @@ class TmdbDataSourceImpl(
         }.body()
     }
 
-    override suspend fun searchMovies(query: String, page: Int, year: Int?): TmdbMovieListResponse {
+    override suspend fun findByImdbId(imdbId: String): TmdbFindResponse {
+        return httpClient.get("find/$imdbId") {
+            parameter("external_source", "imdb_id")
+        }.body()
+    }
+
+    override suspend fun searchMovies(query: String, page: Int, year: Int?, language: String?): TmdbMovieListResponse {
         return httpClient.get("search/movie") {
             parameter("query", query)
             parameter("page", page)
             if (year != null) parameter("year", year)
+            if (language != null) parameter("language", language)
         }.body()
     }
 

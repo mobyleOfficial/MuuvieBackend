@@ -18,6 +18,7 @@ fun Route.getMoviesRouting() {
     val getMovieReviews by injection<GetMovieReviews>()
     val getUserFavoriteMovies by injection<GetUserFavoriteMovies>()
     val getUserWatchList by injection<GetUserWatchList>()
+    val getUserWatchedMovies by injection<GetUserWatchedMovies>()
     val getMovieLists by injection<GetMovieLists>()
     val getUserMovieLists by injection<GetUserMovieLists>()
     val getMovieListDetail by injection<GetMovieListDetail>()
@@ -26,15 +27,11 @@ fun Route.getMoviesRouting() {
     val lookupMovieDetail by injection<LookupMovieDetail>()
 
     get("/movies") {
+        val id = call.parameters["id"]?.toLongOrNull()
+        val tmdbId = call.parameters["tmdbId"]?.toIntOrNull()
         val filmowId = call.parameters["filmowId"]
-        val title = call.parameters["title"]
 
-        if (filmowId == null && title == null) {
-            call.respond(HttpStatusCode.BadRequest, "Query parameter 'filmowId' or 'title' is required")
-            return@get
-        }
-
-        val detail = lookupMovieDetail(null, filmowId, title)
+        val detail = lookupMovieDetail(id, tmdbId, filmowId)
         if (detail == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
         } else {
@@ -96,12 +93,12 @@ fun Route.getMoviesRouting() {
     }
 
     get("/movies/{id}") {
-        val movieId = call.parameters["id"]?.toIntOrNull()
-        if (movieId == null) {
+        val tmdbId = call.parameters["id"]?.toIntOrNull()
+        if (tmdbId == null) {
             call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
             return@get
         }
-        val detail = lookupMovieDetail(movieId, null, null)
+        val detail = lookupMovieDetail(null, tmdbId, null)
         if (detail == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
         } else {
@@ -122,6 +119,12 @@ fun Route.getMoviesRouting() {
     get("/movies/recent/{userId}") {
         val userId = call.parameters["userId"] ?: ""
         call.respond(getRecentMovies(userId))
+    }
+
+    get("/movies/watched/{userId}") {
+        val userId = call.parameters["userId"] ?: ""
+        val page = call.parameters["page"]?.toIntOrNull() ?: 1
+        call.respond(getUserWatchedMovies(userId, page))
     }
 
     get("/movies/favorites/{userId}") {

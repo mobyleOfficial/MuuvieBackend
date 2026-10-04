@@ -36,6 +36,7 @@ val appModule = module {
     factory { GetMovieReviews(repository = get<MoviesRepository>()) }
     factory { GetUserFavoriteMovies(repository = get<MoviesRepository>()) }
     factory { GetUserWatchList(repository = get<MoviesRepository>()) }
+    factory { GetUserWatchedMovies(repository = get<MoviesRepository>()) }
     factory { GetMovieLists(repository = get<MoviesRepository>()) }
     factory { GetUserMovieLists(repository = get<MoviesRepository>()) }
     factory { GetMovieListDetail(repository = get<MoviesRepository>()) }
@@ -61,7 +62,7 @@ val appModule = module {
 
     // Filmow use cases
     factory { ScrapeFilmowProfile(repository = get()) }
-    factory { ImportFilmowData(userDatabaseDataSource = get()) }
+    factory { ImportFilmowData(userDatabaseDataSource = get(), movieCatalogDataSource = get()) }
 
     // Auth use cases
     factory { ProcessOAuthCallback(authRepository = get<AuthRepository>()) }

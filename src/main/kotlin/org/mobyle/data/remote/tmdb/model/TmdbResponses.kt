@@ -125,3 +125,8 @@ data class TmdbLanguage(
     @SerialName("iso_639_1") val iso: String,
     @SerialName("english_name") val englishName: String? = null
 )
+
+@Serializable
+data class TmdbFindResponse(
+    @SerialName("movie_results") val movieResults: List<TmdbMovieResponse> = emptyList()
+)

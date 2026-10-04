@@ -31,7 +31,21 @@ def create_session(cookies_str=""):
             if "=" in pair:
                 key, value = pair.split("=", 1)
                 session.cookies.set(key.strip(), value.strip())
+        log(f"[SESSION] Cookies set: {[k for k in session.cookies.keys()]}")
+    else:
+        log("[SESSION] No cookies provided — scraping as anonymous user")
     return session
+
+
+def check_authenticated(soup):
+    """Returns True if the page indicates an authenticated session."""
+    # Filmow shows a logout link or user menu when logged in
+    if soup.select_one("a[href*='logout'], a[href*='sair'], .user-menu, #user-menu"):
+        return True
+    # No sign-in form on the page is also a good indicator
+    if soup.select_one("form[action*='login'], input[name='password']"):
+        return False
+    return None  # inconclusive
 
 
 def get_page(session, url):
@@ -90,6 +104,8 @@ def scrape_profile_page(session, username):
                 if "Vi" in text:
                     stats["watchedCount"] = count
 
+        authenticated = check_authenticated(soup)
+        log(f"[SESSION] Authenticated: {authenticated}")
         log(f"Stats: {stats}")
 
         # Recently watched from .last-seen section
@@ -101,7 +117,14 @@ def scrape_profile_page(session, username):
                 if not mi:
                     continue
 
-                parsed = parse_movie_item_from_div(mi, "Assisti Recentemente")
+                # Skip series (same check as _collect_list_movies)
+                a_el = mi.select_one("a[href]")
+                item_href = a_el.get("href", "") if a_el else ""
+                if re.search(r"-(temporada|season)-|\d+a-temporada|/serie/", item_href):
+                    log(f"    skipping series in recently watched: {item_href}")
+                    continue
+
+                parsed = parse_movie_item_from_div(mi, "Assisti Recentemente", container=item)
                 if not parsed:
                     continue
 
@@ -120,6 +143,48 @@ def scrape_profile_page(session, username):
         log(f"Failed to scrape profile page for @{username}: {e}")
 
     return display_name, stats, recent
+
+
+_PT_MONTHS = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
+    "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+    "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
+}
+
+
+def parse_date_str(text):
+    """Convert a Filmow date string to ISO-8601 (YYYY-MM-DDT00:00:00Z). Returns None on failure."""
+    if not text:
+        return None
+    text = text.strip().lower()
+    # ISO or partial ISO: 2023-11-04 / 2023-11-04T...
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T00:00:00Z"
+    # DD/MM/YYYY or DD/MM/YY
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", text)
+    if m:
+        year = m.group(3)
+        if len(year) == 2:
+            year = "20" + year
+        return f"{year}-{m.group(2).zfill(2)}-{m.group(1).zfill(2)}T00:00:00Z"
+    # "4 de novembro de 2023" / "em 4 de novembro de 2023"
+    m = re.search(r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", text)
+    if m:
+        month_num = _PT_MONTHS.get(m.group(2))
+        if month_num:
+            return f"{m.group(3)}-{str(month_num).zfill(2)}-{m.group(1).zfill(2)}T00:00:00Z"
+    return None
+
+
+def parse_watched_at(container):
+    """Extract the watched date from a movie list item container element."""
+    el = container.select_one('[id="watched-in"]')
+    if el:
+        # <time datetime="...">, <input value="...">, or plain text
+        raw = el.get("datetime") or el.get("value") or el.get_text(strip=True)
+        return parse_date_str(raw)
+    return None
 
 
 def extract_titles_from_alt(alt_text):
@@ -181,12 +246,17 @@ def parse_movie_item_from_list(item, status):
         "posterUrl": poster_url,
         "voteAverage": vote_average,
         "userRating": user_rating,
+        "watchedAt": None,
+        "href": link.get("href", "") or "",
         "status": status,
     }
 
 
-def parse_movie_item_from_div(item, status):
-    """Extract movie data from a div.movie-item element (newer layout)."""
+def parse_movie_item_from_div(item, status, container=None):
+    """Extract movie data from a div.movie-item element (newer layout).
+
+    container: parent element that may hold the watched-in date field.
+    """
     a = item.select_one("a[href][data-movie-pk]")
     if not a:
         return None
@@ -231,6 +301,8 @@ def parse_movie_item_from_div(item, status):
         "posterUrl": poster_url,
         "voteAverage": vote_average,
         "userRating": user_rating,
+        "watchedAt": None,
+        "href": a.get("href", "") or "",
         "status": status,
     }
 
@@ -289,7 +361,7 @@ def scrape_section(session, username, content_type, status_key, errors):
             # Newer layout: div.movie-item
             div_items = soup.select("div.movie-item")
             for item in div_items:
-                parsed = parse_movie_item_from_div(item, status)
+                parsed = parse_movie_item_from_div(item, status, container=item.parent)
                 if parsed:
                     movies.append(parsed)
 
@@ -505,6 +577,94 @@ def scrape_lists(session, username, errors):
     return lists
 
 
+def fetch_detail_data(session, href, errors):
+    """Fetch the movie detail page and extract all available movie data.
+
+    Returns a dict with any of the following keys (only non-null values included):
+        watchedAt   – ISO-8601 date the user watched the movie
+        posterUrl   – full-resolution poster URL
+        imdbUrl     – IMDB URL from sameAs in JSON-LD
+        overview    – plot description (Portuguese)
+        releaseDate – ISO date "YYYY-MM-DD" from datePublished
+        runtime     – int, duration in minutes
+        director    – str, first director name
+        genres      – list[str], genre names
+    """
+    if not href:
+        return {}
+    url = f"{BASE_URL}{href}"
+    try:
+        soup = get_page(session, url)
+
+        result = {}
+
+        el = soup.select_one('[id="watched-in"]')
+        if el:
+            raw = el.get("datetime") or el.get("value") or el.get_text(strip=True)
+            watched_at = parse_date_str(raw)
+            if watched_at:
+                result["watchedAt"] = watched_at
+
+        poster_wrapper = soup.select_one(".movie__poster-wrapper")
+        if poster_wrapper:
+            first_link = poster_wrapper.select_one("a[href]")
+            if first_link:
+                result["posterUrl"] = first_link.get("href")
+
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(script.string or "")
+                if data.get("@type") != "Movie":
+                    continue
+
+                same_as = data.get("sameAs", [])
+                if isinstance(same_as, list):
+                    imdb_url = next((u for u in same_as if "imdb.com" in u), None)
+                elif isinstance(same_as, str) and "imdb.com" in same_as:
+                    imdb_url = same_as
+                else:
+                    imdb_url = None
+                if imdb_url:
+                    result["imdbUrl"] = imdb_url
+
+                description = (data.get("description") or "").strip()
+                if description:
+                    result["overview"] = description
+
+                date_published = (data.get("datePublished") or "").strip()
+                if date_published:
+                    result["releaseDate"] = date_published  # already ISO: YYYY-MM-DD
+
+                duration = data.get("duration") or ""
+                if duration:
+                    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?", duration)
+                    if m and (m.group(1) or m.group(2)):
+                        result["runtime"] = int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
+
+                directors = data.get("director", [])
+                if isinstance(directors, dict):
+                    directors = [directors]
+                director_names = [d["name"].strip() for d in directors if d.get("name")]
+                if director_names:
+                    result["director"] = director_names[0]
+
+                genres = data.get("genre", [])
+                if isinstance(genres, str):
+                    genres = [genres]
+                genres = [g.strip() for g in genres if g.strip()]
+                if genres:
+                    result["genres"] = genres
+
+                break
+            except Exception:
+                pass
+
+        return result
+    except Exception as e:
+        errors.append(f"fetch_detail_data {href} failed: {e}")
+        return {}
+
+
 def scrape_profile(username, cookies_str=""):
     session = create_session(cookies_str)
     errors = []
@@ -515,9 +675,23 @@ def scrape_profile(username, cookies_str=""):
     log(f"[PHASE] scrape_profile_page done in {time.time() - t_start:.1f}s")
 
     t = time.time()
+    log(f"[PHASE] fetching detail data for {len(recently_watched)} recently watched movies...")
+    for movie in recently_watched:
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] recently watched detail data done in {time.time() - t:.1f}s")
+
+    t = time.time()
     log(f"[PHASE] scrape_section filmes/ja-vi...")
     watched = scrape_section(session, username, "filmes", "ja-vi", errors)
     log(f"[PHASE] filmes/ja-vi done: {len(watched)} movies in {time.time() - t:.1f}s")
+
+    t = time.time()
+    log(f"[PHASE] fetching detail data for {len(watched)} movies...")
+    for movie in watched:
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] detail data done in {time.time() - t:.1f}s")
 
     t = time.time()
     log(f"[PHASE] scrape_section filmes/quero-ver...")
@@ -525,14 +699,37 @@ def scrape_profile(username, cookies_str=""):
     log(f"[PHASE] filmes/quero-ver done: {len(watchlist)} movies in {time.time() - t:.1f}s")
 
     t = time.time()
+    log(f"[PHASE] fetching detail data for {len(watchlist)} watchlist movies...")
+    for movie in watchlist:
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] watchlist detail data done in {time.time() - t:.1f}s")
+
+    t = time.time()
     log(f"[PHASE] scrape_section filmes/favoritos...")
     favorites = scrape_section(session, username, "filmes", "favoritos", errors)
     log(f"[PHASE] filmes/favoritos done: {len(favorites)} movies in {time.time() - t:.1f}s")
 
     t = time.time()
+    log(f"[PHASE] fetching detail data for {len(favorites)} favorites movies...")
+    for movie in favorites:
+        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] favorites detail data done in {time.time() - t:.1f}s")
+
+    t = time.time()
     log(f"[PHASE] scrape_lists...")
     user_lists = scrape_lists(session, username, errors)
     log(f"[PHASE] scrape_lists done: {len(user_lists)} lists in {time.time() - t:.1f}s")
+
+    t = time.time()
+    list_movie_count = sum(len(lst.get("movies", [])) for lst in user_lists)
+    log(f"[PHASE] fetching detail data for {list_movie_count} list movies...")
+    for lst in user_lists:
+        for movie in lst.get("movies", []):
+            detail = fetch_detail_data(session, movie.get("href", ""), errors)
+            movie.update({k: v for k, v in detail.items() if v is not None})
+    log(f"[PHASE] list movies detail data done in {time.time() - t:.1f}s")
 
     log(f"[PHASE] Total scrape time: {time.time() - t_start:.1f}s")
 

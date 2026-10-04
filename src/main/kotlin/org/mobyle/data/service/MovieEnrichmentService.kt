@@ -29,7 +29,7 @@ class MovieEnrichmentService(
                 if (candidate.needsResolution) {
                     resolveAndEnrich(candidate)
                 } else {
-                    enrichFromTmdb(candidate.tmdbId)
+                    enrichFromTmdb(candidate.tmdbId!!)
                 }
                 enriched++
                 delay(DELAY_BETWEEN_CALLS_MS)
@@ -46,20 +46,31 @@ class MovieEnrichmentService(
     }
 
     private suspend fun resolveAndEnrich(candidate: EnrichmentCandidate) {
-        val searchResult = tmdbDataSource.searchMovies(candidate.title, page = 1, year = candidate.year)
-        val bestMatch = searchResult.results.firstOrNull()
-        if (bestMatch == null) {
-            log.warn("[ENRICHMENT] No TMDB match for '${candidate.title}' year=${candidate.year} (filmowId=${candidate.filmowId})")
+        val imdbId = extractImdbId(candidate.imdbUrl)
+        if (imdbId == null) {
+            log.info("[ENRICHMENT] No IMDb ID for '${candidate.title}' (filmowId=${candidate.filmowId}) — skipping resolution")
+            return
+        }
+
+        val tmdbId = tmdbDataSource.findByImdbId(imdbId).movieResults.firstOrNull()?.id
+        if (tmdbId == null) {
+            log.warn("[ENRICHMENT] TMDB has no match for IMDb ID $imdbId ('${candidate.title}')")
             return
         }
 
         catalogDataSource.resolveScrapedMovie(
             oldDbId = candidate.dbId,
-            realTmdbId = bestMatch.id,
+            realTmdbId = tmdbId,
             filmowId = candidate.filmowId
         )
 
-        enrichFromTmdb(bestMatch.id)
+        enrichFromTmdb(tmdbId)
+    }
+
+    private fun extractImdbId(imdbUrl: String?): String? {
+        if (imdbUrl.isNullOrBlank()) return null
+        // Matches tt followed by digits anywhere in the URL, e.g. https://www.imdb.com/title/tt0118694/
+        return Regex("(tt\\d+)").find(imdbUrl)?.value
     }
 
     private suspend fun enrichFromTmdb(tmdbId: Int) {

@@ -24,7 +24,7 @@ object UserFollowsTable : LongIdTable("user_follows") {
 }
 
 object MoviesTable : LongIdTable("movies") {
-    val tmdbId = integer("tmdb_id").uniqueIndex()
+    val tmdbId = integer("tmdb_id").nullable().uniqueIndex()
     val title = varchar("title", 500)
     val localTitle = varchar("local_title", 500).nullable()
     val originalTitle = varchar("original_title", 500).nullable()
@@ -40,6 +40,9 @@ object MoviesTable : LongIdTable("movies") {
     val letterboxdId = varchar("letterboxd_id", 100).nullable().index("idx_movies_letterboxd_id")
     val enrichedAt = timestamp("enriched_at").nullable()
     val needsEnrichment = bool("needs_enrichment").default(true)
+    val imdbUrl = varchar("imdb_url", 500).nullable()
+    val director = varchar("director", 255).nullable()
+    val filmowGenres = text("filmow_genres").nullable() // comma-separated genre names from Filmow
 }
 
 object GenresTable : LongIdTable("genres") {

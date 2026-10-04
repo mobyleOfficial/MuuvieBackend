@@ -7,7 +7,7 @@ import org.mobyle.model.MovieReviewListing
 
 fun TmdbMovieResponse.toDomain(): Movie {
     return Movie(
-        id = id,
+        tmdbId = id,
         title = title ?: "",
         originalTitle = originalTitle,
         overview = overview ?: "",
@@ -36,7 +36,7 @@ fun TmdbMovieDetailResponse.toDomain(): MovieDetail {
         ?: emptyList()
 
     return MovieDetail(
-        id = id,
+        tmdbId = id,
         title = title ?: "",
         originalTitle = originalTitle,
         overview = overview ?: "",

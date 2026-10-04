@@ -4,8 +4,10 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class MovieDetail(
-    val id: Int,
+    val id: Long = 0L,
+    val tmdbId: Int? = null,
     val title: String,
+    val localTitle: String? = null,
     val originalTitle: String? = null,
     val overview: String,
     val posterPath: String? = null,
