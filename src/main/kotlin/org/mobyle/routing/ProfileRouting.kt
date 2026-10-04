@@ -54,8 +54,28 @@ fun Route.getProfileRouting() {
     put("/profile") {
         val principal = call.authenticateJWT(validateToken) ?: return@put
         val profile = call.receive<UserProfile>()
-        updateUserProfile(profile)
-        call.respond(HttpStatusCode.OK)
+        updateUserProfile(profile.copy(id = principal.claims.userId))
+
+        val user = userDatabaseDataSource.findByEmail(principal.claims.email)
+        if (user == null) {
+            call.respond(
+                HttpStatusCode.NotFound,
+                org.mobyle.data.remote.auth.ErrorResponse("user_not_found", "User not found")
+            )
+            return@put
+        }
+        val updatedProfile = UserProfile(
+            id = user.id,
+            photoUrl = user.avatar ?: "",
+            username = user.username,
+            bio = user.bio ?: "",
+            moviesWatchedCount = userDatabaseDataSource.countWatchedMovies(user.id),
+            followingCount = userDatabaseDataSource.countFollowing(user.id),
+            followersCount = userDatabaseDataSource.countFollowers(user.id),
+            recentMovies = userDatabaseDataSource.getRecentWatchedMovies(user.id, limit = 10),
+            isScraping = scrapeStatusManager.isScraping(user.id)
+        )
+        call.respond(HttpStatusCode.OK, updatedProfile)
     }
 
     get("/profile/{userId}") {

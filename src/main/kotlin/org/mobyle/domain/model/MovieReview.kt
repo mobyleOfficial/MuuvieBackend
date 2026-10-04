@@ -9,5 +9,7 @@ data class MovieReview(
     val date: String? = null,
     val rating: Double = 0.0,
     val author: String? = null,
-    val content: String? = null
+    val content: String? = null,
+    val likeCount: Int = 0,
+    val likedByMe: Boolean = false
 )

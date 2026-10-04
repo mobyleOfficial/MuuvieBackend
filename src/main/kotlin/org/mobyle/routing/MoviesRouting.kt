@@ -4,10 +4,13 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import org.mobyle.data.remote.auth.tryAuthenticateJWT
 import org.mobyle.di.injection
+import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.domain.usecase.movies.*
 
 fun Route.getMoviesRouting() {
+    val validateToken by injection<ValidateToken>()
     val getTrendingMovies by injection<GetTrendingMovies>()
 
     val searchMovies by injection<SearchMovies>()
@@ -113,7 +116,8 @@ fun Route.getMoviesRouting() {
             return@get
         }
         val page = call.parameters["page"]?.toIntOrNull() ?: 1
-        call.respond(getMovieReviews(page = page, movieId = movieId))
+        val userId = call.tryAuthenticateJWT(validateToken)?.claims?.userId
+        call.respond(getMovieReviews(page = page, userId = userId, movieId = movieId))
     }
 
     get("/movies/recent/{userId}") {

@@ -114,6 +114,7 @@ fun Route.getAuthRouting() {
                     accessToken = authToken.accessToken,
                     tokenType = authToken.tokenType,
                     expiresIn = authToken.expiresIn,
+                    refreshToken = authToken.refreshToken,
                     profile = profile
                 )
 
@@ -186,6 +187,7 @@ fun Route.getAuthRouting() {
                     accessToken = authToken.accessToken,
                     tokenType = authToken.tokenType,
                     expiresIn = authToken.expiresIn,
+                    refreshToken = authToken.refreshToken,
                     profile = profile
                 )
 
@@ -324,7 +326,8 @@ fun Route.getAuthRouting() {
                     RefreshTokenResponse(
                         accessToken = authToken.accessToken,
                         tokenType = authToken.tokenType,
-                        expiresIn = authToken.expiresIn
+                        expiresIn = authToken.expiresIn,
+                        refreshToken = authToken.refreshToken
                     )
                 )
                 log.info("Token refreshed successfully for user ${authToken.user.id}")
@@ -358,7 +361,8 @@ data class AuthTokenResponse(
 data class RefreshTokenResponse(
     val accessToken: String,
     val tokenType: String,
-    val expiresIn: Long
+    val expiresIn: Long,
+    val refreshToken: String? = null
 )
 
 @Serializable

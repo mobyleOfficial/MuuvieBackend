@@ -1,12 +1,15 @@
 package org.mobyle.data.repository
 
+import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.domain.model.MovieReviewDraft
 import org.mobyle.domain.model.UserActivity
 import org.mobyle.domain.repository.UserActivitiesRepository
 import org.mobyle.model.UserActivityListing
 import kotlin.math.ceil
 
-class UserActivitiesRepositoryImpl : UserActivitiesRepository {
+class UserActivitiesRepositoryImpl(
+    private val userDatabaseDataSource: UserDatabaseDataSource
+) : UserActivitiesRepository {
 
     companion object {
         private fun getMockActivities(): List<UserActivity> = listOf(
@@ -85,7 +88,16 @@ class UserActivitiesRepositoryImpl : UserActivitiesRepository {
         )
     }
 
-    override suspend fun submitReview(draft: MovieReviewDraft) {
-        // TODO: Persist review to database
+    override suspend fun submitReview(userId: String, draft: MovieReviewDraft) {
+        userDatabaseDataSource.submitUserReview(
+            userExternalId = userId,
+            movieTmdbId = draft.movieId,
+            movieTitle = draft.movieTitle,
+            posterPath = draft.posterPath,
+            rating = draft.rating,
+            reviewText = draft.reviewBody,
+            isFavorite = draft.isFavorite,
+            isRewatch = draft.isRewatch
+        )
     }
 }

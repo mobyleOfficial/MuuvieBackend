@@ -13,12 +13,16 @@ import org.mobyle.domain.usecase.activities.GetFriendsActivities
 import org.mobyle.domain.usecase.activities.GetUserActivities
 import org.mobyle.domain.usecase.activities.SubmitReview
 import org.mobyle.domain.usecase.auth.ValidateToken
+import org.mobyle.domain.usecase.movies.LikeReview
+import org.mobyle.domain.usecase.movies.UnlikeReview
 
 fun Route.getActivitiesRouting() {
     val getUserActivities by injection<GetUserActivities>()
     val getFriendsActivities by injection<GetFriendsActivities>()
     val submitReview by injection<SubmitReview>()
     val validateToken by injection<ValidateToken>()
+    val likeReview by injection<LikeReview>()
+    val unlikeReview by injection<UnlikeReview>()
 
     get("/activities/{userId}") {
         val userId = call.parameters["userId"]
@@ -37,7 +41,29 @@ fun Route.getActivitiesRouting() {
     post("/reviews") {
         val principal = call.authenticateJWT(validateToken) ?: return@post
         val draft = call.receive<MovieReviewDraft>()
-        submitReview(draft)
+        submitReview(principal.claims.userId, draft)
         call.respond(HttpStatusCode.Created)
+    }
+
+    post("/reviews/{reviewId}/like") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val reviewId = call.parameters["reviewId"]
+        if (reviewId.isNullOrBlank()) {
+            call.respond(HttpStatusCode.BadRequest, "Review ID is required")
+            return@post
+        }
+        likeReview(principal.claims.userId, reviewId)
+        call.respond(HttpStatusCode.OK)
+    }
+
+    post("/reviews/{reviewId}/unlike") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val reviewId = call.parameters["reviewId"]
+        if (reviewId.isNullOrBlank()) {
+            call.respond(HttpStatusCode.BadRequest, "Review ID is required")
+            return@post
+        }
+        unlikeReview(principal.claims.userId, reviewId)
+        call.respond(HttpStatusCode.OK)
     }
 }

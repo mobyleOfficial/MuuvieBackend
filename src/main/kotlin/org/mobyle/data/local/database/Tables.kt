@@ -173,3 +173,21 @@ object TokenBlocklistTable : LongIdTable("token_blocklist") {
     val token = varchar("token", 1000).uniqueIndex()
     val expiresAt = long("expires_at")
 }
+
+object RefreshTokensTable : LongIdTable("refresh_tokens") {
+    val userExternalId = varchar("user_external_id", 255).index()
+    val tokenHash = varchar("token_hash", 64).uniqueIndex()
+    val expiresAt = long("expires_at")
+    val revokedAt = long("revoked_at").nullable()
+    val createdAt = timestamp("created_at")
+}
+
+object ReviewLikesTable : LongIdTable("review_likes") {
+    val userExternalId = varchar("user_external_id", 255).index()
+    val reviewId = varchar("review_id", 255).index()
+    val createdAt = timestamp("created_at")
+
+    init {
+        uniqueIndex("uq_review_like", userExternalId, reviewId)
+    }
+}

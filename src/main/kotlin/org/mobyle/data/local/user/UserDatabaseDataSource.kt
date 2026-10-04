@@ -28,7 +28,9 @@ import org.slf4j.LoggerFactory
 
 interface UserDatabaseDataSource {
     fun findByEmail(email: String): User?
+    fun findByExternalId(userExternalId: String): User?
     fun save(user: User): User
+    fun updateUser(userExternalId: String, username: String, bio: String?, avatarUrl: String?)
     fun findByUsername(prefix: String): List<String>
     fun countWatchedMovies(userExternalId: String): Int
     fun countFollowing(userExternalId: String): Int
@@ -42,6 +44,16 @@ interface UserDatabaseDataSource {
     fun importMovies(userExternalId: String, movies: List<Movie>, status: String, isFavorite: Boolean = false): List<Movie>
     fun importRecentlyWatched(userExternalId: String, movies: List<Movie>): List<Movie>
     fun importLists(userExternalId: String, lists: List<FilmowList>): List<FilmowList>
+    fun submitUserReview(
+        userExternalId: String,
+        movieTmdbId: Int,
+        movieTitle: String,
+        posterPath: String?,
+        rating: Double,
+        reviewText: String,
+        isFavorite: Boolean,
+        isRewatch: Boolean
+    )
 }
 
 class UserDatabaseDataSourceImpl(
@@ -55,18 +67,29 @@ class UserDatabaseDataSourceImpl(
             UsersTable.selectAll()
                 .where { UsersTable.email eq email }
                 .firstOrNull()
-                ?.let { row ->
-                    User(
-                        id = row[UsersTable.externalId],
-                        email = row[UsersTable.email] ?: "",
-                        username = row[UsersTable.username],
-                        avatar = row[UsersTable.avatarUrl],
-                        bio = row[UsersTable.bio],
-                        createdAt = row[UsersTable.createdAt].toString(),
-                        passwordHash = row[UsersTable.passwordHash]
-                    )
-                }
+                ?.let { row -> rowToUser(row) }
         }
+    }
+
+    override fun findByExternalId(userExternalId: String): User? {
+        return transaction {
+            UsersTable.selectAll()
+                .where { UsersTable.externalId eq userExternalId }
+                .firstOrNull()
+                ?.let { row -> rowToUser(row) }
+        }
+    }
+
+    private fun rowToUser(row: org.jetbrains.exposed.sql.ResultRow): User {
+        return User(
+            id = row[UsersTable.externalId],
+            email = row[UsersTable.email] ?: "",
+            username = row[UsersTable.username],
+            avatar = row[UsersTable.avatarUrl],
+            bio = row[UsersTable.bio],
+            createdAt = row[UsersTable.createdAt].toString(),
+            passwordHash = row[UsersTable.passwordHash]
+        )
     }
 
     override fun save(user: User): User {
@@ -81,6 +104,16 @@ class UserDatabaseDataSourceImpl(
                 it[createdAt] = Clock.System.now()
             }
             user
+        }
+    }
+
+    override fun updateUser(userExternalId: String, username: String, bio: String?, avatarUrl: String?) {
+        transaction {
+            UsersTable.update({ UsersTable.externalId eq userExternalId }) {
+                it[UsersTable.username] = username
+                it[UsersTable.bio] = bio
+                it[UsersTable.avatarUrl] = avatarUrl
+            }
         }
     }
 
@@ -527,5 +560,72 @@ class UserDatabaseDataSourceImpl(
             }
         }
         return result
+    }
+
+    override fun submitUserReview(
+        userExternalId: String,
+        movieTmdbId: Int,
+        movieTitle: String,
+        posterPath: String?,
+        rating: Double,
+        reviewText: String,
+        isFavorite: Boolean,
+        isRewatch: Boolean
+    ) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction
+            val now = Clock.System.now()
+
+            // Find or create the movie by TMDB ID
+            val movieDbId = MoviesTable.selectAll()
+                .where { MoviesTable.tmdbId eq movieTmdbId }
+                .firstOrNull()
+                ?.get(MoviesTable.id)?.value
+                ?: MoviesTable.insertAndGetId {
+                    it[tmdbId] = movieTmdbId
+                    it[title] = movieTitle
+                    it[MoviesTable.posterPath] = posterPath
+                    it[needsEnrichment] = true
+                }.value
+
+            // Check if there's already a manual review for this movie
+            val existing = UserMoviesTable.selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieDbId) and
+                        (UserMoviesTable.importSource eq "manual")
+                }
+                .firstOrNull()
+
+            if (existing != null) {
+                UserMoviesTable.update({
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieDbId) and
+                        (UserMoviesTable.importSource eq "manual")
+                }) {
+                    it[status] = "watched"
+                    it[UserMoviesTable.rating] = rating.toFloat()
+                    it[review] = reviewText
+                    it[UserMoviesTable.isFavorite] = isFavorite
+                    it[rewatches] = if (isRewatch) existing[rewatches] + 1 else existing[rewatches]
+                    it[watchedAt] = now
+                    it[updatedAt] = now
+                }
+            } else {
+                UserMoviesTable.insert {
+                    it[userId] = userDbId
+                    it[movieId] = movieDbId
+                    it[status] = "watched"
+                    it[UserMoviesTable.rating] = rating.toFloat()
+                    it[review] = reviewText
+                    it[UserMoviesTable.isFavorite] = isFavorite
+                    it[rewatches] = if (isRewatch) 1 else 0
+                    it[importSource] = "manual"
+                    it[watchedAt] = now
+                    it[createdAt] = now
+                    it[updatedAt] = now
+                }
+            }
+        }
     }
 }

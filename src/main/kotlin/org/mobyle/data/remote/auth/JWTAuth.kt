@@ -20,6 +20,13 @@ data class ErrorResponse(
     val message: String
 )
 
+/** Returns the principal if a valid JWT is present; returns null WITHOUT responding if absent or invalid. */
+suspend fun ApplicationCall.tryAuthenticateJWT(validateToken: ValidateToken): JWTPrincipal? {
+    val authHeader = request.headers["Authorization"]?.takeIf { it.startsWith("Bearer ") } ?: return null
+    val token = authHeader.substring("Bearer ".length)
+    return validateToken(token).getOrNull()?.let { JWTPrincipal(it) }
+}
+
 suspend fun ApplicationCall.authenticateJWT(validateToken: ValidateToken): JWTPrincipal? {
     return try {
         val authHeader = request.headers["Authorization"] ?: run {

@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.mobyle.data.local.movies.MovieCatalogDataSource
+import org.mobyle.data.local.movies.ReviewLikesDataSource
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.remote.tmdb.toDomain
@@ -20,7 +21,8 @@ class MoviesRepositoryImpl(
     private val tmdbDataSource: TmdbDataSource,
     private val userDatabaseDataSource: UserDatabaseDataSource,
     private val movieCatalogDataSource: MovieCatalogDataSource,
-    private val enrichmentService: MovieEnrichmentService
+    private val enrichmentService: MovieEnrichmentService,
+    private val reviewLikesDataSource: ReviewLikesDataSource
 ) : MoviesRepository {
 
     private val log = LoggerFactory.getLogger(MoviesRepositoryImpl::class.java)
@@ -184,9 +186,37 @@ class MoviesRepositoryImpl(
 
     override suspend fun getMovieReviews(page: Int, userId: String?, movieId: Int?): MovieReviewListing {
         if (movieId != null) {
-            return tmdbDataSource.getMovieReviews(movieId, page).toDomain()
+            val listing = tmdbDataSource.getMovieReviews(movieId, page).toDomain()
+            val reviewIds = listing.reviews.map { it.id }
+            val likeCounts = withContext(Dispatchers.IO) {
+                reviewLikesDataSource.getLikeCounts(reviewIds)
+            }
+            val likedByUser = if (userId != null) {
+                withContext(Dispatchers.IO) {
+                    reviewLikesDataSource.getLikedReviewIds(userId, reviewIds)
+                }
+            } else emptySet()
+            val enriched = listing.reviews.map { review ->
+                review.copy(
+                    likeCount = likeCounts[review.id] ?: 0,
+                    likedByMe = review.id in likedByUser
+                )
+            }
+            return listing.copy(reviews = enriched)
         }
         return MovieReviewListing(totalPages = 0, totalResults = 0, reviews = emptyList())
+    }
+
+    override suspend fun likeReview(userId: String, reviewId: String) {
+        withContext(Dispatchers.IO) {
+            reviewLikesDataSource.like(userId, reviewId)
+        }
+    }
+
+    override suspend fun unlikeReview(userId: String, reviewId: String) {
+        withContext(Dispatchers.IO) {
+            reviewLikesDataSource.unlike(userId, reviewId)
+        }
     }
 
     override suspend fun getUserFavoriteMovies(userId: String, page: Int): MovieListing {

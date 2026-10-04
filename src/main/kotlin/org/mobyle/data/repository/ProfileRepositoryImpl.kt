@@ -1,9 +1,12 @@
 package org.mobyle.data.repository
 
+import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.domain.model.*
 import org.mobyle.domain.repository.ProfileRepository
 
-class ProfileRepositoryImpl : ProfileRepository {
+class ProfileRepositoryImpl(
+    private val userDatabaseDataSource: UserDatabaseDataSource
+) : ProfileRepository {
 
     companion object {
         private val mockProfiles = mapOf(
@@ -69,15 +72,16 @@ class ProfileRepositoryImpl : ProfileRepository {
     }
 
     override suspend fun getUserProfile(): UserProfile {
-        return UserProfile(
-            username = "@filmfan42",
-            bio = "Film enthusiast and movie critic",
-            photoUrl = "https://api.example.com/avatars/user-001.jpg"
-        )
+        return UserProfile(username = "")
     }
 
     override suspend fun updateUserProfile(profile: UserProfile) {
-        // TODO: Persist to database
+        userDatabaseDataSource.updateUser(
+            userExternalId = profile.id,
+            username = profile.username,
+            bio = profile.bio.takeIf { it.isNotBlank() },
+            avatarUrl = profile.photoUrl.takeIf { it.isNotBlank() }
+        )
     }
 
     override suspend fun getPublicProfile(userId: String): PublicProfile {

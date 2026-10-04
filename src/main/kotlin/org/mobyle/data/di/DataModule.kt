@@ -8,11 +8,15 @@ import io.ktor.client.plugins.logging.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
+import org.mobyle.data.local.auth.RefreshTokenDataSource
+import org.mobyle.data.local.auth.RefreshTokenDataSourceImpl
 import org.mobyle.data.local.auth.TokenBlocklistDataSource
 import org.mobyle.data.local.oauth.OAuthStateDataSource
 import org.mobyle.data.local.oauth.OAuthStateDataSourceImpl
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.local.movies.MovieCatalogDataSourceImpl
+import org.mobyle.data.local.movies.ReviewLikesDataSource
+import org.mobyle.data.local.movies.ReviewLikesDataSourceImpl
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.local.user.UserDatabaseDataSourceImpl
 import org.mobyle.data.local.user.UserLocalDataSource
@@ -96,13 +100,18 @@ val dataModule = module {
         )
     }
 
+    single<ReviewLikesDataSource> {
+        ReviewLikesDataSourceImpl()
+    }
+
     single<MoviesRepository> {
         try {
             MoviesRepositoryImpl(
                 tmdbDataSource = get(),
                 userDatabaseDataSource = get(),
                 movieCatalogDataSource = get(),
-                enrichmentService = get()
+                enrichmentService = get(),
+                reviewLikesDataSource = get()
             )
         } catch (e: Exception) {
             throw IllegalStateException("Failed to create MoviesRepositoryImpl: ${e.message}", e)
@@ -110,11 +119,11 @@ val dataModule = module {
     }
 
     single<ProfileRepository> {
-        ProfileRepositoryImpl()
+        ProfileRepositoryImpl(userDatabaseDataSource = get())
     }
 
     single<UserActivitiesRepository> {
-        UserActivitiesRepositoryImpl()
+        UserActivitiesRepositoryImpl(userDatabaseDataSource = get())
     }
 
     single<CommentsDataSource> {
@@ -158,6 +167,10 @@ val dataModule = module {
 
     single<TokenBlocklistDataSource> {
         TokenBlocklistDataSource()
+    }
+
+    single<RefreshTokenDataSource> {
+        RefreshTokenDataSourceImpl()
     }
 
     single<OAuthStateDataSource> {
@@ -225,7 +238,8 @@ val dataModule = module {
             jwtUtil = get(),
             userDatabaseDataSource = get(),
             tokenBlocklistDataSource = get(),
-            userLocalDataSource = get()
+            userLocalDataSource = get(),
+            refreshTokenDataSource = get()
         )
     }
 }

@@ -1,6 +1,7 @@
 package org.mobyle.data.repository
 
 import at.favre.lib.crypto.bcrypt.BCrypt
+import org.mobyle.data.local.auth.RefreshTokenDataSource
 import org.mobyle.data.local.auth.TokenBlocklistDataSource
 import org.mobyle.data.local.oauth.OAuthStateDataSource
 import org.mobyle.data.local.user.UserDatabaseDataSource
@@ -31,7 +32,8 @@ class AuthRepositoryImpl(
     private val jwtUtil: JWTUtil,
     private val userDatabaseDataSource: UserDatabaseDataSource,
     private val tokenBlocklistDataSource: TokenBlocklistDataSource,
-    private val userLocalDataSource: UserLocalDataSource
+    private val userLocalDataSource: UserLocalDataSource,
+    private val refreshTokenDataSource: RefreshTokenDataSource
 ) : AuthRepository {
 
     override suspend fun processOAuthCallback(request: OAuthCallbackRequest): Result<AuthToken> {
@@ -102,8 +104,32 @@ class AuthRepositoryImpl(
     }
 
     override suspend fun refreshToken(refreshToken: String): Result<AuthToken> {
-        // Phase 2 implementation
-        return Result.failure(Exception("not_implemented"))
+        return try {
+            val userExternalId = refreshTokenDataSource.validate(refreshToken)
+                ?: return Result.failure(Exception("invalid_refresh_token"))
+
+            // Rotate: revoke old token before issuing new ones
+            refreshTokenDataSource.revoke(refreshToken)
+
+            val user = userDatabaseDataSource.findByExternalId(userExternalId)
+                ?: return Result.failure(Exception("user_not_found"))
+
+            val accessToken = jwtUtil.generateToken(user)
+            val newRefreshToken = refreshTokenDataSource.create(userExternalId)
+
+            Result.success(
+                AuthToken(
+                    accessToken = accessToken,
+                    tokenType = "Bearer",
+                    expiresIn = jwtUtil.jwtExpirySeconds,
+                    refreshToken = newRefreshToken,
+                    user = user.copy(passwordHash = null)
+                )
+            )
+        } catch (e: Exception) {
+            log.error("Token refresh failed: ${e.message}")
+            Result.failure(Exception("internal_error"))
+        }
     }
 
     override suspend fun getUserById(userId: String): Result<User> {
@@ -150,13 +176,15 @@ class AuthRepositoryImpl(
                 return Result.failure(Exception("invalid_credentials"))
             }
 
-            // Password correct — generate JWT
+            // Password correct — generate JWT and refresh token
             val accessToken = jwtUtil.generateToken(existingUser)
+            val newRefreshToken = refreshTokenDataSource.create(existingUser.id)
 
             val authToken = AuthToken(
                 accessToken = accessToken,
                 tokenType = "Bearer",
                 expiresIn = jwtUtil.jwtExpirySeconds,
+                refreshToken = newRefreshToken,
                 user = existingUser.copy(passwordHash = null),
                 isNewUser = false
             )
@@ -233,14 +261,16 @@ class AuthRepositoryImpl(
             userLocalDataSource.saveUser(newUser.copy(passwordHash = null))
             println("[SIGNUP] User saved to L1 cache")
 
-            println("[SIGNUP] Generating JWT...")
+            println("[SIGNUP] Generating JWT and refresh token...")
             val accessToken = jwtUtil.generateToken(newUser)
-            println("[SIGNUP] JWT generated")
+            val newRefreshToken = refreshTokenDataSource.create(userId)
+            println("[SIGNUP] JWT and refresh token generated")
 
             val authToken = AuthToken(
                 accessToken = accessToken,
                 tokenType = "Bearer",
                 expiresIn = jwtUtil.jwtExpirySeconds,
+                refreshToken = newRefreshToken,
                 user = newUser.copy(passwordHash = null),
                 isNewUser = true
             )
