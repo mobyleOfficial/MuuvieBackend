@@ -48,6 +48,7 @@ object DatabaseConfig {
                 ArticlesTable,
                 TokenBlocklistTable,
                 RefreshTokensTable,
+                MovieLikesTable,
                 ReviewLikesTable
             )
         }

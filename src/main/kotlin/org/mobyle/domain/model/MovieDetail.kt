@@ -24,5 +24,6 @@ data class MovieDetail(
     val popularReviews: List<MovieReview> = emptyList(),
     val reviewCount: Int = 0,
     val listCount: Int = 0,
-    val likeCount: Int = 0
+    val likeCount: Int = 0,
+    val likedByMe: Boolean = false
 )

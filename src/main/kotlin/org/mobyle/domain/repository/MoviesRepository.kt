@@ -7,8 +7,8 @@ import org.mobyle.model.MovieReviewListing
 
 interface MoviesRepository {
     suspend fun getTrendingMovies(page: Int): MovieListing
-    suspend fun getMovieDetail(movieId: Int): MovieDetail
-    suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?): MovieDetail?
+    suspend fun getMovieDetail(movieId: Int, userId: String? = null): MovieDetail
+    suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?, userId: String? = null): MovieDetail?
     suspend fun searchMovies(query: String, page: Int): MovieListing
     suspend fun discoverMovies(
         page: Int,
@@ -35,4 +35,6 @@ interface MoviesRepository {
     suspend fun getRecentMovies(userId: String, limit: Int = 10): MovieListing
     suspend fun likeReview(userId: String, reviewId: String)
     suspend fun unlikeReview(userId: String, reviewId: String)
+    suspend fun likeMovie(userId: String, movieId: Long)
+    suspend fun unlikeMovie(userId: String, movieId: Long)
 }

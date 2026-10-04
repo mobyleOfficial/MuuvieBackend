@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.mobyle.data.local.movies.MovieCatalogDataSource
+import org.mobyle.data.local.movies.MovieLikesDataSource
 import org.mobyle.data.local.movies.ReviewLikesDataSource
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSource
@@ -22,7 +23,8 @@ class MoviesRepositoryImpl(
     private val userDatabaseDataSource: UserDatabaseDataSource,
     private val movieCatalogDataSource: MovieCatalogDataSource,
     private val enrichmentService: MovieEnrichmentService,
-    private val reviewLikesDataSource: ReviewLikesDataSource
+    private val reviewLikesDataSource: ReviewLikesDataSource,
+    private val movieLikesDataSource: MovieLikesDataSource
 ) : MoviesRepository {
 
     private val log = LoggerFactory.getLogger(MoviesRepositoryImpl::class.java)
@@ -32,27 +34,20 @@ class MoviesRepositoryImpl(
         return listing.copy(movies = cacheAndAssignIds(listing.movies))
     }
 
-    override suspend fun getMovieDetail(movieId: Int): MovieDetail {
+    override suspend fun getMovieDetail(movieId: Int, userId: String?): MovieDetail {
         val local = movieCatalogDataSource.getLocalMovieDetail(movieId)
-        if (local != null) {
-            // Check if similars/providers need refresh
+        val detail = if (local != null) {
             val similarsCache = movieCatalogDataSource.getSimilarMovies(movieId)
             val providersCache = movieCatalogDataSource.getWatchProviders(movieId)
-
-            if (similarsCache.isStale || providersCache.isStale) {
-                refreshVolatileData(movieId)
-            }
-
-            return local.copy(
-                similarMovies = similarsCache.data,
-                watchProviders = providersCache.data
-            )
+            if (similarsCache.isStale || providersCache.isStale) refreshVolatileData(movieId)
+            local.copy(similarMovies = similarsCache.data, watchProviders = providersCache.data)
+        } else {
+            fetchAndCacheDetail(movieId)
         }
-
-        return fetchAndCacheDetail(movieId)
+        return enrichWithLikes(detail, userId)
     }
 
-    override suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?): MovieDetail? {
+    override suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?, userId: String?): MovieDetail? {
         // 1. Search DB by any provided identifier (id has highest priority)
         val localMovie = when {
             id != null -> movieCatalogDataSource.findById(id)
@@ -64,7 +59,7 @@ class MoviesRepositoryImpl(
         // 2. Found in DB with tmdbId — return local enriched detail
         if (localMovie?.tmdbId != null) {
             val local = movieCatalogDataSource.getLocalMovieDetail(localMovie.tmdbId)
-            if (local != null) return local.copy(id = localMovie.id)
+            if (local != null) return enrichWithLikes(local.copy(id = localMovie.id), userId)
         }
 
         // 3. Not enriched locally — fetch from TMDB
@@ -73,17 +68,25 @@ class MoviesRepositoryImpl(
             val detail = fetchAndCacheDetail(fetchTmdbId)
             val dbId = localMovie?.id ?: movieCatalogDataSource.findByTmdbId(fetchTmdbId)?.id ?: detail.id
             val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie?.overview ?: ""
-            return detail.copy(id = dbId, overview = overview)
+            return enrichWithLikes(detail.copy(id = dbId, overview = overview), userId)
         }
 
         // 4. Found in DB but no tmdbId — return scraped local data directly.
-        // Background enrichment (MovieEnrichmentService) will resolve tmdbId over time;
-        // once resolved, subsequent calls will hit step 2 above.
         if (localMovie != null) {
             return movieCatalogDataSource.getLocalMovieDetailByDbId(localMovie.id)
+                ?.let { enrichWithLikes(it, userId) }
         }
 
         return null
+    }
+
+    private suspend fun enrichWithLikes(detail: MovieDetail, userId: String?): MovieDetail {
+        if (detail.id <= 0L) return detail
+        val likeCount = withContext(Dispatchers.IO) { movieLikesDataSource.getLikeCount(detail.id) }
+        val likedByMe = if (userId != null) {
+            withContext(Dispatchers.IO) { movieLikesDataSource.isLikedByUser(userId, detail.id) }
+        } else false
+        return detail.copy(likeCount = likeCount, likedByMe = likedByMe)
     }
 
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
@@ -216,6 +219,18 @@ class MoviesRepositoryImpl(
     override suspend fun unlikeReview(userId: String, reviewId: String) {
         withContext(Dispatchers.IO) {
             reviewLikesDataSource.unlike(userId, reviewId)
+        }
+    }
+
+    override suspend fun likeMovie(userId: String, movieId: Long) {
+        withContext(Dispatchers.IO) {
+            movieLikesDataSource.like(userId, movieId)
+        }
+    }
+
+    override suspend fun unlikeMovie(userId: String, movieId: Long) {
+        withContext(Dispatchers.IO) {
+            movieLikesDataSource.unlike(userId, movieId)
         }
     }
 

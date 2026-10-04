@@ -4,6 +4,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import org.mobyle.data.remote.auth.authenticateJWT
 import org.mobyle.data.remote.auth.tryAuthenticateJWT
 import org.mobyle.di.injection
 import org.mobyle.domain.usecase.auth.ValidateToken
@@ -11,6 +13,8 @@ import org.mobyle.domain.usecase.movies.*
 
 fun Route.getMoviesRouting() {
     val validateToken by injection<ValidateToken>()
+    val likeMovie by injection<LikeMovie>()
+    val unlikeMovie by injection<UnlikeMovie>()
     val getTrendingMovies by injection<GetTrendingMovies>()
 
     val searchMovies by injection<SearchMovies>()
@@ -33,8 +37,9 @@ fun Route.getMoviesRouting() {
         val id = call.parameters["id"]?.toLongOrNull()
         val tmdbId = call.parameters["tmdbId"]?.toIntOrNull()
         val filmowId = call.parameters["filmowId"]
+        val userId = call.tryAuthenticateJWT(validateToken)?.claims?.userId
 
-        val detail = lookupMovieDetail(id, tmdbId, filmowId)
+        val detail = lookupMovieDetail(id, tmdbId, filmowId, userId)
         if (detail == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
         } else {
@@ -101,12 +106,35 @@ fun Route.getMoviesRouting() {
             call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
             return@get
         }
-        val detail = lookupMovieDetail(null, tmdbId, null)
+        val userId = call.tryAuthenticateJWT(validateToken)?.claims?.userId
+        val detail = lookupMovieDetail(null, tmdbId, null, userId)
         if (detail == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Movie not found"))
         } else {
             call.respond(detail)
         }
+    }
+
+    post("/movies/{id}/like") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val movieId = call.parameters["id"]?.toLongOrNull()
+        if (movieId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
+            return@post
+        }
+        likeMovie(principal.claims.userId, movieId)
+        call.respond(HttpStatusCode.OK)
+    }
+
+    post("/movies/{id}/unlike") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val movieId = call.parameters["id"]?.toLongOrNull()
+        if (movieId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
+            return@post
+        }
+        unlikeMovie(principal.claims.userId, movieId)
+        call.respond(HttpStatusCode.OK)
     }
 
     get("/movies/{id}/reviews") {

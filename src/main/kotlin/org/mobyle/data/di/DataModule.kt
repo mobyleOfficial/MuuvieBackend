@@ -15,6 +15,8 @@ import org.mobyle.data.local.oauth.OAuthStateDataSource
 import org.mobyle.data.local.oauth.OAuthStateDataSourceImpl
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.local.movies.MovieCatalogDataSourceImpl
+import org.mobyle.data.local.movies.MovieLikesDataSource
+import org.mobyle.data.local.movies.MovieLikesDataSourceImpl
 import org.mobyle.data.local.movies.ReviewLikesDataSource
 import org.mobyle.data.local.movies.ReviewLikesDataSourceImpl
 import org.mobyle.data.local.user.UserDatabaseDataSource
@@ -100,6 +102,10 @@ val dataModule = module {
         )
     }
 
+    single<MovieLikesDataSource> {
+        MovieLikesDataSourceImpl()
+    }
+
     single<ReviewLikesDataSource> {
         ReviewLikesDataSourceImpl()
     }
@@ -111,7 +117,8 @@ val dataModule = module {
                 userDatabaseDataSource = get(),
                 movieCatalogDataSource = get(),
                 enrichmentService = get(),
-                reviewLikesDataSource = get()
+                reviewLikesDataSource = get(),
+                movieLikesDataSource = get()
             )
         } catch (e: Exception) {
             throw IllegalStateException("Failed to create MoviesRepositoryImpl: ${e.message}", e)

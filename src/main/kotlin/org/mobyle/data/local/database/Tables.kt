@@ -182,6 +182,16 @@ object RefreshTokensTable : LongIdTable("refresh_tokens") {
     val createdAt = timestamp("created_at")
 }
 
+object MovieLikesTable : LongIdTable("movie_likes") {
+    val userExternalId = varchar("user_external_id", 255).index()
+    val movieId = long("movie_id").index()
+    val createdAt = timestamp("created_at")
+
+    init {
+        uniqueIndex("uq_movie_like", userExternalId, movieId)
+    }
+}
+
 object ReviewLikesTable : LongIdTable("review_likes") {
     val userExternalId = varchar("user_external_id", 255).index()
     val reviewId = varchar("review_id", 255).index()
