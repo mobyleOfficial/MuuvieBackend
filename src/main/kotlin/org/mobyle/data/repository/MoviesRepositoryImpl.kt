@@ -3,6 +3,7 @@ package org.mobyle.data.repository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSource
@@ -26,8 +27,7 @@ class MoviesRepositoryImpl(
 
     override suspend fun getTrendingMovies(page: Int): MovieListing {
         val listing = tmdbDataSource.getTrendingMovies(page).toDomain()
-        cacheMovieListAsync(listing.movies)
-        return listing
+        return listing.copy(movies = cacheAndAssignIds(listing.movies))
     }
 
     override suspend fun getMovieDetail(movieId: Int): MovieDetail {
@@ -136,8 +136,7 @@ class MoviesRepositoryImpl(
 
     override suspend fun searchMovies(query: String, page: Int): MovieListing {
         val listing = tmdbDataSource.searchMovies(query, page).toDomain()
-        cacheMovieListAsync(listing.movies)
-        return listing
+        return listing.copy(movies = cacheAndAssignIds(listing.movies))
     }
 
     override suspend fun discoverMovies(
@@ -154,17 +153,17 @@ class MoviesRepositoryImpl(
         val listing = tmdbDataSource.discoverMovies(
             page, year, releaseDateGte, releaseDateLte, sortBy, genres, language, country, voteCountGte
         ).toDomain()
-        cacheMovieListAsync(listing.movies)
-        return listing
+        return listing.copy(movies = cacheAndAssignIds(listing.movies))
     }
 
-    private fun cacheMovieListAsync(movies: List<Movie>) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
+    private suspend fun cacheAndAssignIds(movies: List<Movie>): List<Movie> {
+        return try {
+            withContext(Dispatchers.IO) {
                 movieCatalogDataSource.cacheMovieListWithIds(movies)
-            } catch (e: Exception) {
-                log.warn("Failed to cache movie list: ${e.message}")
             }
+        } catch (e: Exception) {
+            log.warn("Failed to cache movie list: ${e.message}")
+            movies
         }
     }
 
