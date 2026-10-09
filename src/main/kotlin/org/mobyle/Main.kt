@@ -32,7 +32,9 @@ import org.mobyle.routing.getAuthRouting
 import org.mobyle.routing.getCommentsRouting
 import org.mobyle.routing.getFilmowRouting
 import org.mobyle.routing.getMoviesRouting
+import org.mobyle.routing.getPersonsRouting
 import org.mobyle.routing.getProfileRouting
+import org.mobyle.routing.getSocialRouting
 import org.mobyle.routing.getWebSocketRouting
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
@@ -194,8 +196,10 @@ fun Application.configureRouting() {
     routing {
         getAuthRouting()
         getMoviesRouting()
+        getPersonsRouting()
         getProfileRouting()
         getActivitiesRouting()
+        getSocialRouting()
         getCommentsRouting()
         getArticlesRouting()
         getFilmowRouting()

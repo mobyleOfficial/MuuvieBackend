@@ -17,7 +17,7 @@ class TmdbDataSourceImpl(
 
     override suspend fun getMovieDetail(movieId: Int): TmdbMovieDetailResponse {
         return httpClient.get("movie/$movieId") {
-            parameter("append_to_response", "credits,watch/providers,similar,reviews")
+            parameter("append_to_response", "credits,videos,watch/providers,similar,reviews")
         }.body()
     }
 

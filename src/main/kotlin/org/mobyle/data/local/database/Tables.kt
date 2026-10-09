@@ -42,6 +42,7 @@ object MoviesTable : LongIdTable("movies") {
     val needsEnrichment = bool("needs_enrichment").default(true)
     val imdbUrl = varchar("imdb_url", 500).nullable()
     val director = varchar("director", 255).nullable()
+    val trailerKey = varchar("trailer_key", 20).nullable()
     val filmowGenres = text("filmow_genres").nullable() // comma-separated genre names from Filmow
 }
 
@@ -63,6 +64,7 @@ object PeopleTable : LongIdTable("people") {
     val tmdbId = integer("tmdb_id").uniqueIndex()
     val name = varchar("name", 255)
     val profilePath = varchar("profile_path", 500).nullable()
+    val fetchedAt = timestamp("fetched_at").nullable()
 }
 
 object MovieCastTable : LongIdTable("movie_cast") {
@@ -71,6 +73,7 @@ object MovieCastTable : LongIdTable("movie_cast") {
     val role = varchar("role", 50)
     val character = varchar("character", 255).nullable()
     val position = integer("position").default(0)
+    val fetchedAt = timestamp("fetched_at").nullable()
 
     init {
         uniqueIndex("uq_movie_person_role", movieId, personId, role)

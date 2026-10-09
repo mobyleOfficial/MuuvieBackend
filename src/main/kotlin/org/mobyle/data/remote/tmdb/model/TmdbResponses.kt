@@ -37,6 +37,7 @@ data class TmdbMovieDetailResponse(
     val runtime: Int? = null,
     val genres: List<TmdbGenre> = emptyList(),
     val credits: TmdbCredits? = null,
+    val videos: TmdbVideosResponse? = null,
     @SerialName("watch/providers") val watchProviders: TmdbWatchProvidersWrapper? = null,
     val similar: TmdbMovieListResponse? = null,
     val reviews: TmdbReviewListResponse? = null
@@ -79,6 +80,19 @@ data class TmdbWatchProviderRegion(
 data class TmdbWatchProviderEntry(
     @SerialName("provider_name") val providerName: String? = null,
     @SerialName("logo_path") val logoPath: String? = null
+)
+
+@Serializable
+data class TmdbVideosResponse(
+    val results: List<TmdbVideo> = emptyList()
+)
+
+@Serializable
+data class TmdbVideo(
+    val key: String? = null,
+    val site: String? = null,
+    val type: String? = null,
+    val official: Boolean = false
 )
 
 @Serializable

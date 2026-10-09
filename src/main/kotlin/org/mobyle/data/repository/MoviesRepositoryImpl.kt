@@ -6,6 +6,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.local.movies.MovieLikesDataSource
+import org.mobyle.data.local.movies.PersonDataSource
 import org.mobyle.data.local.movies.ReviewLikesDataSource
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSource
@@ -24,7 +25,8 @@ class MoviesRepositoryImpl(
     private val movieCatalogDataSource: MovieCatalogDataSource,
     private val enrichmentService: MovieEnrichmentService,
     private val reviewLikesDataSource: ReviewLikesDataSource,
-    private val movieLikesDataSource: MovieLikesDataSource
+    private val movieLikesDataSource: MovieLikesDataSource,
+    private val personDataSource: PersonDataSource
 ) : MoviesRepository {
 
     private val log = LoggerFactory.getLogger(MoviesRepositoryImpl::class.java)
@@ -231,6 +233,14 @@ class MoviesRepositoryImpl(
     override suspend fun unlikeMovie(userId: String, movieId: Long) {
         withContext(Dispatchers.IO) {
             movieLikesDataSource.unlike(userId, movieId)
+        }
+    }
+
+    override suspend fun getPersonDetail(personId: Long): PersonDetail? {
+        return withContext(Dispatchers.IO) {
+            val person = personDataSource.getPersonById(personId) ?: return@withContext null
+            val credits = personDataSource.getCreditsForPerson(personId)
+            PersonDetail(person = person, credits = credits)
         }
     }
 

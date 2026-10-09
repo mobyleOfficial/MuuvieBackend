@@ -37,4 +37,5 @@ interface MoviesRepository {
     suspend fun unlikeReview(userId: String, reviewId: String)
     suspend fun likeMovie(userId: String, movieId: Long)
     suspend fun unlikeMovie(userId: String, movieId: Long)
+    suspend fun getPersonDetail(personId: Long): PersonDetail?
 }

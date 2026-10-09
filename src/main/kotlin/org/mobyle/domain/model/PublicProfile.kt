@@ -13,7 +13,8 @@ data class PublicProfile(
     val followers: List<ProfileUser> = emptyList(),
     val favoriteMovies: List<ProfileFavoriteMovie> = emptyList(),
     val recentActivities: List<ProfileRecentActivity> = emptyList(),
-    val watchlist: List<ProfileWatchlistItem> = emptyList()
+    val watchlist: List<ProfileWatchlistItem> = emptyList(),
+    val isFollowing: Boolean = false
 )
 
 @Serializable

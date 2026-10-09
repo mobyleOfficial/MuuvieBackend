@@ -1,5 +1,12 @@
 package org.mobyle.data.repository
 
+import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.mobyle.data.local.database.MoviesTable
+import org.mobyle.data.local.database.UserMoviesTable
+import org.mobyle.data.local.database.UsersTable
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.domain.model.*
 import org.mobyle.domain.repository.ProfileRepository
@@ -7,69 +14,6 @@ import org.mobyle.domain.repository.ProfileRepository
 class ProfileRepositoryImpl(
     private val userDatabaseDataSource: UserDatabaseDataSource
 ) : ProfileRepository {
-
-    companion object {
-        private val mockProfiles = mapOf(
-            "user-001" to PublicProfile(
-                id = "user-001",
-                displayName = "Alice Martins",
-                initials = "AM",
-                bio = "Film enthusiast and critic",
-                moviesWatched = listOf(
-                    ProfileWatchedMovie(550, "Fight Club", "/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg"),
-                    ProfileWatchedMovie(278, "The Shawshank Redemption", "/q6725aR8Zs4IwsER1POIPZeroA8.jpg"),
-                    ProfileWatchedMovie(238, "The Godfather", "/3bhkrj58Vtu7enYsRolD1fZQeQA.jpg")
-                ),
-                following = listOf(
-                    ProfileUser("user-002", "Bruno Carvalho", "BC"),
-                    ProfileUser("user-003", "Camila Torres", "CT")
-                ),
-                followers = listOf(
-                    ProfileUser("user-004", "Diego Ferreira", "DF"),
-                    ProfileUser("user-005", "Elena Souza", "ES")
-                ),
-                favoriteMovies = listOf(
-                    ProfileFavoriteMovie(550, "Fight Club"),
-                    ProfileFavoriteMovie(278, "The Shawshank Redemption"),
-                    ProfileFavoriteMovie(238, "The Godfather")
-                ),
-                recentActivities = listOf(
-                    ProfileRecentActivity("watched", "Inception", "2 days ago"),
-                    ProfileRecentActivity("reviewed", "The Dark Knight", "5 days ago"),
-                    ProfileRecentActivity("added_to_watchlist", "Parasite", "1 week ago")
-                ),
-                watchlist = listOf(
-                    ProfileWatchlistItem(550, "Interstellar"),
-                    ProfileWatchlistItem(278, "The Matrix"),
-                    ProfileWatchlistItem(238, "Blade Runner 2049")
-                )
-            ),
-            "user-002" to PublicProfile(
-                id = "user-002",
-                displayName = "Bruno Carvalho",
-                initials = "BC",
-                bio = "Movie geek, always discovering new films",
-                moviesWatched = listOf(
-                    ProfileWatchedMovie(278, "The Shawshank Redemption", "/q6725aR8Zs4IwsER1POIPZeroA8.jpg"),
-                    ProfileWatchedMovie(238, "The Godfather", "/3bhkrj58Vtu7enYsRolD1fZQeQA.jpg")
-                ),
-                following = listOf(ProfileUser("user-001", "Alice Martins", "AM")),
-                followers = listOf(
-                    ProfileUser("user-001", "Alice Martins", "AM"),
-                    ProfileUser("user-003", "Camila Torres", "CT")
-                ),
-                favoriteMovies = listOf(
-                    ProfileFavoriteMovie(278, "The Shawshank Redemption")
-                ),
-                recentActivities = listOf(
-                    ProfileRecentActivity("reviewed", "The Godfather Part II", "3 days ago")
-                ),
-                watchlist = listOf(
-                    ProfileWatchlistItem(12, "Finding Nemo")
-                )
-            )
-        )
-    }
 
     override suspend fun getUserProfile(): UserProfile {
         return UserProfile(username = "")
@@ -84,11 +28,184 @@ class ProfileRepositoryImpl(
         )
     }
 
-    override suspend fun getPublicProfile(userId: String): PublicProfile {
-        return mockProfiles[userId] ?: PublicProfile(
+    override suspend fun getPublicProfile(userId: String, currentUserId: String?): PublicProfile {
+        val user = userDatabaseDataSource.findByExternalId(userId)
+            ?: return PublicProfile(id = userId, displayName = "Unknown User", initials = "??")
+
+        val initials = computeInitials(user.username)
+
+        val moviesWatched = getProfileWatchedMovies(userId, limit = 10)
+        val favoriteMovies = getProfileFavoriteMovies(userId, limit = 10)
+        val watchlist = getProfileWatchlist(userId, limit = 10)
+        val following = userDatabaseDataSource.getFollowing(userId)
+        val followers = userDatabaseDataSource.getFollowers(userId)
+        val recentActivities = getProfileRecentActivities(userId, limit = 5)
+        val isFollowing = if (currentUserId != null) {
+            userDatabaseDataSource.isFollowing(currentUserId, userId)
+        } else false
+
+        return PublicProfile(
             id = userId,
-            displayName = "Unknown User",
-            initials = "??"
+            displayName = user.username,
+            initials = initials,
+            bio = user.bio,
+            moviesWatched = moviesWatched,
+            following = following,
+            followers = followers,
+            favoriteMovies = favoriteMovies,
+            recentActivities = recentActivities,
+            watchlist = watchlist,
+            isFollowing = isFollowing
         )
+    }
+
+    // ── Social ──────────────────────────────────────────────────────────────
+
+    override suspend fun followUser(followerId: String, followedId: String): Boolean =
+        userDatabaseDataSource.followUser(followerId, followedId)
+
+    override suspend fun unfollowUser(followerId: String, followedId: String): Boolean =
+        userDatabaseDataSource.unfollowUser(followerId, followedId)
+
+    override suspend fun isFollowing(followerId: String, followedId: String): Boolean =
+        userDatabaseDataSource.isFollowing(followerId, followedId)
+
+    override suspend fun getFollowers(userId: String, page: Int, pageSize: Int): List<ProfileUser> =
+        userDatabaseDataSource.getFollowers(userId, page, pageSize)
+
+    override suspend fun getFollowing(userId: String, page: Int, pageSize: Int): List<ProfileUser> =
+        userDatabaseDataSource.getFollowing(userId, page, pageSize)
+
+    override suspend fun getMyFollowing(currentUserId: String): List<SocialUser> =
+        userDatabaseDataSource.getMyFollowing(currentUserId)
+
+    override suspend fun searchUsers(query: String, currentUserId: String): List<SocialUser> =
+        userDatabaseDataSource.searchUsers(query, currentUserId)
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private fun getProfileWatchedMovies(userExternalId: String, limit: Int): List<ProfileWatchedMovie> {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction emptyList()
+
+            (UserMoviesTable innerJoin MoviesTable)
+                .selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.status eq "watched")
+                }
+                .orderBy(UserMoviesTable.watchedAt, SortOrder.DESC)
+                .limit(limit)
+                .map { row ->
+                    ProfileWatchedMovie(
+                        id = row[MoviesTable.tmdbId] ?: row[MoviesTable.id].value.toInt(),
+                        title = row[MoviesTable.title],
+                        posterPath = row[MoviesTable.posterPath]
+                    )
+                }
+        }
+    }
+
+    private fun getProfileFavoriteMovies(userExternalId: String, limit: Int): List<ProfileFavoriteMovie> {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction emptyList()
+
+            (UserMoviesTable innerJoin MoviesTable)
+                .selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.isFavorite eq true)
+                }
+                .orderBy(UserMoviesTable.updatedAt, SortOrder.DESC)
+                .limit(limit)
+                .map { row ->
+                    ProfileFavoriteMovie(
+                        id = row[MoviesTable.tmdbId] ?: row[MoviesTable.id].value.toInt(),
+                        title = row[MoviesTable.title]
+                    )
+                }
+        }
+    }
+
+    private fun getProfileWatchlist(userExternalId: String, limit: Int): List<ProfileWatchlistItem> {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction emptyList()
+
+            (UserMoviesTable innerJoin MoviesTable)
+                .selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.status eq "want_to_watch")
+                }
+                .orderBy(UserMoviesTable.updatedAt, SortOrder.DESC)
+                .limit(limit)
+                .map { row ->
+                    ProfileWatchlistItem(
+                        id = row[MoviesTable.tmdbId] ?: row[MoviesTable.id].value.toInt(),
+                        title = row[MoviesTable.title]
+                    )
+                }
+        }
+    }
+
+    private fun getProfileRecentActivities(userExternalId: String, limit: Int): List<ProfileRecentActivity> {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction emptyList()
+
+            (UserMoviesTable innerJoin MoviesTable)
+                .selectAll()
+                .where { UserMoviesTable.userId eq userDbId }
+                .orderBy(UserMoviesTable.updatedAt, SortOrder.DESC)
+                .limit(limit)
+                .map { row ->
+                    val status = row[UserMoviesTable.status]
+                    val hasReview = !row[UserMoviesTable.review].isNullOrBlank()
+                    val movieTitle = row[MoviesTable.title]
+
+                    val action = when {
+                        hasReview -> "Reviewed"
+                        status == "watched" -> "Watched"
+                        status == "want_to_watch" -> "Added to watchlist"
+                        else -> "Watched"
+                    }
+
+                    val time = row[UserMoviesTable.watchedAt]?.let {
+                        formatRelativeTime(it.toEpochMilliseconds())
+                    } ?: "Recently"
+
+                    ProfileRecentActivity(action = action, movie = movieTitle, time = time)
+                }
+        }
+    }
+
+    private fun resolveUserDbId(userExternalId: String): Long? {
+        return UsersTable.selectAll()
+            .where { UsersTable.externalId eq userExternalId }
+            .firstOrNull()
+            ?.get(UsersTable.id)?.value
+    }
+
+    private fun computeInitials(username: String): String {
+        val parts = username.split(Regex("[_\\s.]+")).filter { it.isNotBlank() }
+        return when {
+            parts.size >= 2 -> "${parts[0].first().uppercaseChar()}${parts[1].first().uppercaseChar()}"
+            parts.size == 1 && parts[0].length >= 2 -> parts[0].take(2).uppercase()
+            parts.size == 1 -> parts[0].first().uppercaseChar().toString()
+            else -> "??"
+        }
+    }
+
+    private fun formatRelativeTime(epochMs: Long): String {
+        val diffMs = System.currentTimeMillis() - epochMs
+        val diffMinutes = diffMs / 60_000
+        val diffHours = diffMinutes / 60
+        val diffDays = diffHours / 24
+        return when {
+            diffMinutes < 60 -> "${diffMinutes}m ago"
+            diffHours < 24 -> "${diffHours}h ago"
+            diffDays == 1L -> "1d ago"
+            diffDays < 7 -> "${diffDays}d ago"
+            else -> "${diffDays / 7}w ago"
+        }
     }
 }

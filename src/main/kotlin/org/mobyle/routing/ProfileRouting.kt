@@ -7,6 +7,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.put
 import org.mobyle.data.remote.auth.authenticateJWT
+import org.mobyle.data.remote.auth.tryAuthenticateJWT
 import org.mobyle.di.injection
 import org.mobyle.domain.model.UserProfile
 import org.mobyle.data.local.user.UserDatabaseDataSource
@@ -84,6 +85,7 @@ fun Route.getProfileRouting() {
             call.respond(HttpStatusCode.BadRequest, "User ID is required")
             return@get
         }
-        call.respond(getPublicProfile(userId))
+        val currentUserId = call.tryAuthenticateJWT(validateToken)?.claims?.userId
+        call.respond(getPublicProfile(userId, currentUserId))
     }
 }

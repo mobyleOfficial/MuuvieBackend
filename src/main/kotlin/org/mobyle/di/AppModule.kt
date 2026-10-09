@@ -19,6 +19,12 @@ import org.mobyle.domain.usecase.movies.*
 import org.mobyle.domain.usecase.profile.GetPublicProfile
 import org.mobyle.domain.usecase.profile.GetUserProfile
 import org.mobyle.domain.usecase.profile.UpdateUserProfile
+import org.mobyle.domain.usecase.social.FollowUser
+import org.mobyle.domain.usecase.social.GetFollowers
+import org.mobyle.domain.usecase.social.GetFollowing
+import org.mobyle.domain.usecase.social.GetMyFollowing
+import org.mobyle.domain.usecase.social.SearchUsers
+import org.mobyle.domain.usecase.social.UnfollowUser
 import org.mobyle.domain.repository.AuthRepository
 import org.mobyle.domain.repository.MoviesRepository
 import org.koin.dsl.module
@@ -46,11 +52,20 @@ val appModule = module {
     factory { UnlikeReview(repository = get<MoviesRepository>()) }
     factory { LikeMovie(repository = get<MoviesRepository>()) }
     factory { UnlikeMovie(repository = get<MoviesRepository>()) }
+    factory { GetPersonDetail(repository = get<MoviesRepository>()) }
 
     // Profile use cases
     factory { GetUserProfile(repository = get()) }
     factory { UpdateUserProfile(repository = get()) }
     factory { GetPublicProfile(repository = get()) }
+
+    // Social use cases
+    factory { FollowUser(repository = get()) }
+    factory { UnfollowUser(repository = get()) }
+    factory { GetFollowers(repository = get()) }
+    factory { GetFollowing(repository = get()) }
+    factory { GetMyFollowing(repository = get()) }
+    factory { SearchUsers(repository = get()) }
 
     // Activities use cases
     factory { GetUserActivities(repository = get()) }

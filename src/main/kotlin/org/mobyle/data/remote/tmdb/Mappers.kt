@@ -4,6 +4,9 @@ import org.mobyle.data.remote.tmdb.model.*
 import org.mobyle.domain.model.*
 import org.mobyle.model.MovieListing
 import org.mobyle.model.MovieReviewListing
+import org.slf4j.LoggerFactory
+
+private val mapperLog = LoggerFactory.getLogger("TmdbMapper")
 
 fun TmdbMovieResponse.toDomain(): Movie {
     return Movie(
@@ -27,8 +30,41 @@ fun TmdbMovieListResponse.toDomain(): MovieListing {
 }
 
 fun TmdbMovieDetailResponse.toDomain(): MovieDetail {
-    val director = credits?.crew?.firstOrNull { it.job == "Director" }?.name
-    val castNames = credits?.cast?.take(10)?.mapNotNull { it.name } ?: emptyList()
+    val director = runCatching {
+        credits?.crew?.firstOrNull { it.job == "Director" }?.let { crew ->
+            val tmdbId = crew.id ?: return@let null
+            Person(id = 0L, tmdbPersonId = tmdbId, name = crew.name ?: "", profilePath = crew.profilePath)
+        }
+    }.getOrElse { mapperLog.warn("director mapping failed: ${it.message}"); null }
+
+    val writers = runCatching {
+        credits?.crew
+            ?.filter { it.job in listOf("Screenplay", "Writer", "Story") }
+            ?.distinctBy { it.id }
+            ?.mapNotNull { crew ->
+                val tmdbId = crew.id ?: return@mapNotNull null
+                Person(id = 0L, tmdbPersonId = tmdbId, name = crew.name ?: "", profilePath = crew.profilePath)
+            } ?: emptyList()
+    }.getOrElse { mapperLog.warn("writers mapping failed: ${it.message}"); emptyList() }
+
+    val cast = runCatching {
+        credits?.cast?.take(10)?.mapNotNull { member ->
+            val tmdbId = member.id ?: return@mapNotNull null
+            CastMember(
+                person = Person(id = 0L, tmdbPersonId = tmdbId, name = member.name ?: "", profilePath = member.profilePath),
+                character = member.character,
+                order = member.order
+            )
+        } ?: emptyList()
+    }.getOrElse { mapperLog.warn("cast mapping failed: ${it.message}"); emptyList() }
+
+    val trailerKey = runCatching {
+        videos?.results
+            ?.filter { it.site == "YouTube" && it.type == "Trailer" }
+            ?.sortedByDescending { it.official }
+            ?.firstOrNull()?.key
+    }.getOrElse { mapperLog.warn("trailer mapping failed: ${it.message}"); null }
+
     val providers = watchProviders?.results?.values
         ?.flatMap { it.flatrate }
         ?.distinctBy { it.providerName }
@@ -48,7 +84,9 @@ fun TmdbMovieDetailResponse.toDomain(): MovieDetail {
         runtime = runtime,
         genres = genres.mapNotNull { it.name },
         director = director,
-        cast = castNames,
+        writers = writers,
+        cast = cast,
+        trailerKey = trailerKey,
         watchProviders = providers,
         similarMovies = similar?.results?.take(10)?.map { it.toDomain() } ?: emptyList(),
         popularReviews = reviews?.results?.take(5)?.map { it.toDomain() } ?: emptyList(),

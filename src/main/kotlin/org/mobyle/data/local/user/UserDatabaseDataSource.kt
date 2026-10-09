@@ -3,6 +3,7 @@ package org.mobyle.data.local.user
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.insertAndGetId
@@ -10,6 +11,8 @@ import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.upsert
+import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.not
 import org.mobyle.data.local.database.MoviesTable
 import org.mobyle.data.local.database.UserFollowsTable
 import org.mobyle.data.local.database.UserListItemsTable
@@ -21,6 +24,8 @@ import org.mobyle.domain.model.FilmowList
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieList
 import org.mobyle.domain.model.MovieListDetail
+import org.mobyle.domain.model.ProfileUser
+import org.mobyle.domain.model.SocialUser
 import org.mobyle.domain.model.User
 import org.mobyle.model.MovieListing
 import org.mobyle.model.MovieListListing
@@ -54,6 +59,15 @@ interface UserDatabaseDataSource {
         isFavorite: Boolean,
         isRewatch: Boolean
     )
+
+    // Social methods
+    fun followUser(followerExternalId: String, followedExternalId: String): Boolean
+    fun unfollowUser(followerExternalId: String, followedExternalId: String): Boolean
+    fun isFollowing(followerExternalId: String, followedExternalId: String): Boolean
+    fun getFollowers(userExternalId: String, page: Int = 1, pageSize: Int = 50): List<ProfileUser>
+    fun getFollowing(userExternalId: String, page: Int = 1, pageSize: Int = 50): List<ProfileUser>
+    fun getMyFollowing(currentUserExternalId: String): List<SocialUser>
+    fun searchUsers(query: String, currentUserExternalId: String): List<SocialUser>
 }
 
 class UserDatabaseDataSourceImpl(
@@ -626,6 +640,171 @@ class UserDatabaseDataSourceImpl(
                     it[updatedAt] = now
                 }
             }
+        }
+    }
+
+    // ── Social ──────────────────────────────────────────────────────────────
+
+    override fun followUser(followerExternalId: String, followedExternalId: String): Boolean {
+        return transaction {
+            val followerDbId = resolveUserDbId(followerExternalId) ?: return@transaction false
+            val followedDbId = resolveUserDbId(followedExternalId) ?: return@transaction false
+
+            val alreadyFollowing = UserFollowsTable.selectAll()
+                .where { (UserFollowsTable.followerId eq followerDbId) and (UserFollowsTable.followedId eq followedDbId) }
+                .count() > 0
+
+            if (alreadyFollowing) return@transaction false
+
+            UserFollowsTable.insert {
+                it[followerId] = followerDbId
+                it[followedId] = followedDbId
+                it[createdAt] = Clock.System.now()
+            }
+            true
+        }
+    }
+
+    override fun unfollowUser(followerExternalId: String, followedExternalId: String): Boolean {
+        return transaction {
+            val followerDbId = resolveUserDbId(followerExternalId) ?: return@transaction false
+            val followedDbId = resolveUserDbId(followedExternalId) ?: return@transaction false
+
+            val deleted = UserFollowsTable.deleteWhere {
+                (followerId eq followerDbId) and (followedId eq followedDbId)
+            }
+            deleted > 0
+        }
+    }
+
+    override fun isFollowing(followerExternalId: String, followedExternalId: String): Boolean {
+        return transaction {
+            val followerDbId = resolveUserDbId(followerExternalId) ?: return@transaction false
+            val followedDbId = resolveUserDbId(followedExternalId) ?: return@transaction false
+
+            UserFollowsTable.selectAll()
+                .where { (UserFollowsTable.followerId eq followerDbId) and (UserFollowsTable.followedId eq followedDbId) }
+                .count() > 0
+        }
+    }
+
+    override fun getFollowers(userExternalId: String, page: Int, pageSize: Int): List<ProfileUser> {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction emptyList()
+
+            UserFollowsTable
+                .join(UsersTable, org.jetbrains.exposed.sql.JoinType.INNER, UserFollowsTable.followerId, UsersTable.id)
+                .selectAll()
+                .where { UserFollowsTable.followedId eq userDbId }
+                .orderBy(UserFollowsTable.createdAt, SortOrder.DESC)
+                .limit(pageSize, offset = ((page - 1) * pageSize).toLong())
+                .map { row ->
+                    val username = row[UsersTable.username]
+                    ProfileUser(
+                        id = row[UsersTable.externalId],
+                        displayName = username,
+                        initials = computeInitials(username)
+                    )
+                }
+        }
+    }
+
+    override fun getFollowing(userExternalId: String, page: Int, pageSize: Int): List<ProfileUser> {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction emptyList()
+
+            UserFollowsTable
+                .join(UsersTable, org.jetbrains.exposed.sql.JoinType.INNER, UserFollowsTable.followedId, UsersTable.id)
+                .selectAll()
+                .where { UserFollowsTable.followerId eq userDbId }
+                .orderBy(UserFollowsTable.createdAt, SortOrder.DESC)
+                .limit(pageSize, offset = ((page - 1) * pageSize).toLong())
+                .map { row ->
+                    val username = row[UsersTable.username]
+                    ProfileUser(
+                        id = row[UsersTable.externalId],
+                        displayName = username,
+                        initials = computeInitials(username)
+                    )
+                }
+        }
+    }
+
+    override fun getMyFollowing(currentUserExternalId: String): List<SocialUser> {
+        return transaction {
+            val currentUserDbId = resolveUserDbId(currentUserExternalId) ?: return@transaction emptyList()
+
+            UserFollowsTable
+                .join(UsersTable, org.jetbrains.exposed.sql.JoinType.INNER, UserFollowsTable.followedId, UsersTable.id)
+                .selectAll()
+                .where { UserFollowsTable.followerId eq currentUserDbId }
+                .orderBy(UserFollowsTable.createdAt, SortOrder.DESC)
+                .map { row ->
+                    val followedExternalId = row[UsersTable.externalId]
+                    val username = row[UsersTable.username]
+                    val followedDbId = row[UsersTable.id].value
+
+                    val moviesWatchedCount = UserMoviesTable.selectAll()
+                        .where {
+                            (UserMoviesTable.userId eq followedDbId) and
+                                (UserMoviesTable.status eq "watched")
+                        }
+                        .count()
+                        .toInt()
+
+                    SocialUser(
+                        id = followedExternalId,
+                        displayName = username,
+                        initials = computeInitials(username),
+                        moviesWatchedCount = moviesWatchedCount,
+                        isFollowing = true
+                    )
+                }
+        }
+    }
+
+    override fun searchUsers(query: String, currentUserExternalId: String): List<SocialUser> {
+        return transaction {
+            val currentUserDbId = resolveUserDbId(currentUserExternalId) ?: return@transaction emptyList()
+
+            val followedIds = UserFollowsTable.selectAll()
+                .where { UserFollowsTable.followerId eq currentUserDbId }
+                .map { it[UserFollowsTable.followedId].value }
+                .toSet()
+
+            UsersTable.selectAll()
+                .where { (UsersTable.username like "%${query.lowercase()}%") and not(UsersTable.externalId eq currentUserExternalId) }
+                .limit(20)
+                .map { row ->
+                    val userDbId = row[UsersTable.id].value
+                    val username = row[UsersTable.username]
+
+                    val moviesWatchedCount = UserMoviesTable.selectAll()
+                        .where {
+                            (UserMoviesTable.userId eq userDbId) and
+                                (UserMoviesTable.status eq "watched")
+                        }
+                        .count()
+                        .toInt()
+
+                    SocialUser(
+                        id = row[UsersTable.externalId],
+                        displayName = username,
+                        initials = computeInitials(username),
+                        moviesWatchedCount = moviesWatchedCount,
+                        isFollowing = userDbId in followedIds
+                    )
+                }
+        }
+    }
+
+    private fun computeInitials(username: String): String {
+        val parts = username.split(Regex("[_\\s.]+")).filter { it.isNotBlank() }
+        return when {
+            parts.size >= 2 -> "${parts[0].first().uppercaseChar()}${parts[1].first().uppercaseChar()}"
+            parts.size == 1 && parts[0].length >= 2 -> parts[0].take(2).uppercase()
+            parts.size == 1 -> parts[0].first().uppercaseChar().toString()
+            else -> "??"
         }
     }
 }
