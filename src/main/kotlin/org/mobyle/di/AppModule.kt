@@ -54,6 +54,9 @@ val appModule = module {
     factory { UnlikeMovie(repository = get<MoviesRepository>()) }
     factory { GetPersonDetail(repository = get<MoviesRepository>()) }
     factory { CreateMovieList(repository = get<MoviesRepository>()) }
+    factory { DeleteMovieList(repository = get<MoviesRepository>()) }
+    factory { AddMovieToList(repository = get<MoviesRepository>()) }
+    factory { RemoveMovieFromList(repository = get<MoviesRepository>()) }
 
     // Profile use cases
     factory { GetUserProfile(repository = get()) }

@@ -277,9 +277,27 @@ class MoviesRepositoryImpl(
         return MovieListListing(totalPages = 0, totalResults = 0, lists = emptyList())
     }
 
-    override suspend fun createMovieList(userId: String, name: String, description: String?): MovieList {
+    override suspend fun createMovieList(userId: String, name: String, description: String?, movieIds: List<Long>): MovieList {
         return withContext(Dispatchers.IO) {
-            userDatabaseDataSource.createList(userId, name, description)
+            userDatabaseDataSource.createList(userId, name, description, movieIds)
+        }
+    }
+
+    override suspend fun deleteMovieList(userId: String, listId: Int) {
+        withContext(Dispatchers.IO) {
+            userDatabaseDataSource.deleteList(userId, listId.toLong())
+        }
+    }
+
+    override suspend fun addMovieToList(userId: String, listId: Int, movieId: Long) {
+        withContext(Dispatchers.IO) {
+            userDatabaseDataSource.addMovieToList(userId, listId.toLong(), movieId)
+        }
+    }
+
+    override suspend fun removeMovieFromList(userId: String, listId: Int, movieId: Long) {
+        withContext(Dispatchers.IO) {
+            userDatabaseDataSource.removeMovieFromList(userId, listId.toLong(), movieId)
         }
     }
 

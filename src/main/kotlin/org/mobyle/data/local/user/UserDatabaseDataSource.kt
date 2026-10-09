@@ -71,7 +71,10 @@ interface UserDatabaseDataSource {
     fun getFollowing(userExternalId: String, page: Int = 1, pageSize: Int = 50): List<ProfileUser>
     fun getMyFollowing(currentUserExternalId: String): List<SocialUser>
     fun searchUsers(query: String, currentUserExternalId: String): List<SocialUser>
-    fun createList(userExternalId: String, name: String, description: String?): MovieList
+    fun createList(userExternalId: String, name: String, description: String?, movieIds: List<Long> = emptyList()): MovieList
+    fun deleteList(userExternalId: String, listId: Long)
+    fun addMovieToList(userExternalId: String, listId: Long, movieId: Long)
+    fun removeMovieFromList(userExternalId: String, listId: Long, movieId: Long)
 }
 
 class UserDatabaseDataSourceImpl(
@@ -866,7 +869,7 @@ class UserDatabaseDataSourceImpl(
         }
     }
 
-    override fun createList(userExternalId: String, name: String, description: String?): MovieList {
+    override fun createList(userExternalId: String, name: String, description: String?, movieIds: List<Long>): MovieList {
         return transaction {
             val userDbId = resolveUserDbId(userExternalId)
                 ?: throw IllegalArgumentException("User not found")
@@ -875,12 +878,28 @@ class UserDatabaseDataSourceImpl(
                 .where { UsersTable.externalId eq userExternalId }
                 .firstOrNull()?.get(UsersTable.username) ?: ""
 
+            val now = Clock.System.now()
             val listId = UserListsTable.insertAndGetId {
                 it[userId] = userDbId
                 it[UserListsTable.name] = name
                 it[UserListsTable.description] = description
                 it[isPublic] = true
-                it[createdAt] = Clock.System.now()
+                it[createdAt] = now
+            }
+
+            val posterPaths = mutableListOf<String>()
+            for ((position, movieDbId) in movieIds.withIndex()) {
+                UserListItemsTable.insert {
+                    it[UserListItemsTable.listId] = listId
+                    it[UserListItemsTable.movieId] = org.jetbrains.exposed.dao.id.EntityID(movieDbId, MoviesTable)
+                    it[UserListItemsTable.position] = position
+                    it[addedAt] = now
+                }
+                if (posterPaths.size < 4) {
+                    MoviesTable.selectAll()
+                        .where { MoviesTable.id eq movieDbId }
+                        .firstOrNull()?.get(MoviesTable.posterPath)?.let { posterPaths.add(it) }
+                }
             }
 
             MovieList(
@@ -888,9 +907,63 @@ class UserDatabaseDataSourceImpl(
                 name = name,
                 creator = username,
                 description = description,
-                movieCount = 0,
-                posterPaths = emptyList()
+                movieCount = movieIds.size,
+                posterPaths = posterPaths
             )
+        }
+    }
+
+    override fun deleteList(userExternalId: String, listId: Long) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            val listRow = UserListsTable.selectAll()
+                .where { (UserListsTable.id eq listId) and (UserListsTable.userId eq userDbId) }
+                .firstOrNull()
+                ?: throw IllegalArgumentException("List not found or not owned by user")
+
+            UserListItemsTable.deleteWhere { UserListItemsTable.listId eq listId }
+            UserListsTable.deleteWhere { UserListsTable.id eq listId }
+        }
+    }
+
+    override fun addMovieToList(userExternalId: String, listId: Long, movieId: Long) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            UserListsTable.selectAll()
+                .where { (UserListsTable.id eq listId) and (UserListsTable.userId eq userDbId) }
+                .firstOrNull()
+                ?: throw IllegalArgumentException("List not found or not owned by user")
+
+            val maxPosition = UserListItemsTable.selectAll()
+                .where { UserListItemsTable.listId eq listId }
+                .maxOfOrNull { it[UserListItemsTable.position] } ?: -1
+
+            UserListItemsTable.insert {
+                it[UserListItemsTable.listId] = listId
+                it[UserListItemsTable.movieId] = movieId
+                it[position] = maxPosition + 1
+                it[addedAt] = Clock.System.now()
+            }
+        }
+    }
+
+    override fun removeMovieFromList(userExternalId: String, listId: Long, movieId: Long) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            UserListsTable.selectAll()
+                .where { (UserListsTable.id eq listId) and (UserListsTable.userId eq userDbId) }
+                .firstOrNull()
+                ?: throw IllegalArgumentException("List not found or not owned by user")
+
+            UserListItemsTable.deleteWhere {
+                (UserListItemsTable.listId eq listId) and (UserListItemsTable.movieId eq movieId)
+            }
         }
     }
 

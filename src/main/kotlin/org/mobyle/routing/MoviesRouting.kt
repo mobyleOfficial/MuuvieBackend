@@ -4,6 +4,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import kotlinx.serialization.Serializable
@@ -14,7 +15,10 @@ import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.domain.usecase.movies.*
 
 @Serializable
-data class CreateListRequest(val name: String, val description: String? = null)
+data class CreateListRequest(val name: String, val description: String? = null, val movieIds: List<Long> = emptyList())
+
+@Serializable
+data class AddMovieRequest(val movieId: Long)
 
 fun Route.getMoviesRouting() {
     val validateToken by injection<ValidateToken>()
@@ -38,6 +42,9 @@ fun Route.getMoviesRouting() {
     val getRecentMovies by injection<GetRecentMovies>()
     val lookupMovieDetail by injection<LookupMovieDetail>()
     val createMovieList by injection<CreateMovieList>()
+    val deleteMovieList by injection<DeleteMovieList>()
+    val addMovieToList by injection<AddMovieToList>()
+    val removeMovieFromList by injection<RemoveMovieFromList>()
 
     get("/movies") {
         val id = call.parameters["id"]?.toLongOrNull()
@@ -184,7 +191,7 @@ fun Route.getMoviesRouting() {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "List name must not be blank"))
             return@post
         }
-        val movieList = createMovieList(principal.claims.userId, request.name, request.description)
+        val movieList = createMovieList(principal.claims.userId, request.name, request.description, request.movieIds)
         call.respond(HttpStatusCode.Created, movieList)
     }
 
@@ -212,5 +219,40 @@ fun Route.getMoviesRouting() {
         }
         val page = call.parameters["page"]?.toIntOrNull() ?: 1
         call.respond(getMovieListDetail(listId, page))
+    }
+
+    delete("/movies/lists/{id}") {
+        val principal = call.authenticateJWT(validateToken) ?: return@delete
+        val listId = call.parameters["id"]?.toIntOrNull()
+        if (listId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid list ID")
+            return@delete
+        }
+        deleteMovieList(principal.claims.userId, listId)
+        call.respond(HttpStatusCode.NoContent)
+    }
+
+    post("/movies/lists/{id}/movies") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val listId = call.parameters["id"]?.toIntOrNull()
+        if (listId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid list ID")
+            return@post
+        }
+        val request = call.receive<AddMovieRequest>()
+        addMovieToList(principal.claims.userId, listId, request.movieId)
+        call.respond(HttpStatusCode.Created)
+    }
+
+    delete("/movies/lists/{id}/movies/{movieId}") {
+        val principal = call.authenticateJWT(validateToken) ?: return@delete
+        val listId = call.parameters["id"]?.toIntOrNull()
+        val movieId = call.parameters["movieId"]?.toLongOrNull()
+        if (listId == null || movieId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid list or movie ID")
+            return@delete
+        }
+        removeMovieFromList(principal.claims.userId, listId, movieId)
+        call.respond(HttpStatusCode.NoContent)
     }
 }
