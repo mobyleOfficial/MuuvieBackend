@@ -60,6 +60,9 @@ interface UserDatabaseDataSource {
         isRewatch: Boolean
     )
 
+    // Activities
+    fun getFriendsActivities(currentUserExternalId: String, page: Int = 1, pageSize: Int = 10): Pair<List<org.mobyle.domain.model.UserActivity>, Int>
+
     // Social methods
     fun followUser(followerExternalId: String, followedExternalId: String): Boolean
     fun unfollowUser(followerExternalId: String, followedExternalId: String): Boolean
@@ -68,6 +71,7 @@ interface UserDatabaseDataSource {
     fun getFollowing(userExternalId: String, page: Int = 1, pageSize: Int = 50): List<ProfileUser>
     fun getMyFollowing(currentUserExternalId: String): List<SocialUser>
     fun searchUsers(query: String, currentUserExternalId: String): List<SocialUser>
+    fun createList(userExternalId: String, name: String, description: String?): MovieList
 }
 
 class UserDatabaseDataSourceImpl(
@@ -643,6 +647,70 @@ class UserDatabaseDataSourceImpl(
         }
     }
 
+    // ── Activities ─────────────────────────────────────────────────────────
+
+    override fun getFriendsActivities(
+        currentUserExternalId: String,
+        page: Int,
+        pageSize: Int
+    ): Pair<List<org.mobyle.domain.model.UserActivity>, Int> {
+        return transaction {
+            val currentUserDbId = resolveUserDbId(currentUserExternalId)
+                ?: return@transaction Pair(emptyList(), 0)
+
+            // Get IDs of users the current user follows
+            val followedDbIds = UserFollowsTable.selectAll()
+                .where { UserFollowsTable.followerId eq currentUserDbId }
+                .map { it[UserFollowsTable.followedId].value }
+
+            if (followedDbIds.isEmpty()) return@transaction Pair(emptyList(), 0)
+
+            // Count total activities from followed users
+            val totalResults = (UserMoviesTable innerJoin MoviesTable)
+                .selectAll()
+                .where { UserMoviesTable.userId inList followedDbIds }
+                .count()
+                .toInt()
+
+            val totalPages = if (totalResults == 0) 0 else (totalResults + pageSize - 1) / pageSize
+
+            // Get paginated activities
+            val activities = (UserMoviesTable innerJoin MoviesTable)
+                .selectAll()
+                .where { UserMoviesTable.userId inList followedDbIds }
+                .orderBy(UserMoviesTable.updatedAt, SortOrder.DESC)
+                .limit(pageSize, offset = ((page - 1) * pageSize).toLong())
+                .map { row ->
+                    val userDbId = row[UserMoviesTable.userId].value
+                    val username = UsersTable.selectAll()
+                        .where { UsersTable.id eq userDbId }
+                        .firstOrNull()?.get(UsersTable.username) ?: "Unknown"
+
+                    val status = row[UserMoviesTable.status]
+                    val hasReview = !row[UserMoviesTable.review].isNullOrBlank()
+                    val movieTitle = row[MoviesTable.title]
+
+                    val action = when {
+                        hasReview -> "Reviewed"
+                        status == "watched" -> "Watched"
+                        status == "want_to_watch" -> "Added to watchlist"
+                        else -> "Watched"
+                    }
+
+                    val time = row[UserMoviesTable.updatedAt].toString()
+
+                    org.mobyle.domain.model.UserActivity(
+                        userName = username,
+                        action = action,
+                        movie = movieTitle,
+                        time = time
+                    )
+                }
+
+            Pair(activities, totalPages)
+        }
+    }
+
     // ── Social ──────────────────────────────────────────────────────────────
 
     override fun followUser(followerExternalId: String, followedExternalId: String): Boolean {
@@ -795,6 +863,34 @@ class UserDatabaseDataSourceImpl(
                         isFollowing = userDbId in followedIds
                     )
                 }
+        }
+    }
+
+    override fun createList(userExternalId: String, name: String, description: String?): MovieList {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            val username = UsersTable.selectAll()
+                .where { UsersTable.externalId eq userExternalId }
+                .firstOrNull()?.get(UsersTable.username) ?: ""
+
+            val listId = UserListsTable.insertAndGetId {
+                it[userId] = userDbId
+                it[UserListsTable.name] = name
+                it[UserListsTable.description] = description
+                it[isPublic] = true
+                it[createdAt] = Clock.System.now()
+            }
+
+            MovieList(
+                id = listId.value.toInt(),
+                name = name,
+                creator = username,
+                description = description,
+                movieCount = 0,
+                posterPaths = emptyList()
+            )
         }
     }
 

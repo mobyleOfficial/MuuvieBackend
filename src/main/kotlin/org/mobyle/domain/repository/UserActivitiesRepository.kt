@@ -6,6 +6,6 @@ import org.mobyle.model.UserActivityListing
 
 interface UserActivitiesRepository {
     suspend fun getUserActivities(userId: String): List<UserActivity>
-    suspend fun getFriendsActivities(page: Int): UserActivityListing
+    suspend fun getFriendsActivities(currentUserId: String, page: Int): UserActivityListing
     suspend fun submitReview(userId: String, draft: MovieReviewDraft)
 }

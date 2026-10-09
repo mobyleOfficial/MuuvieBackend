@@ -53,6 +53,7 @@ val appModule = module {
     factory { LikeMovie(repository = get<MoviesRepository>()) }
     factory { UnlikeMovie(repository = get<MoviesRepository>()) }
     factory { GetPersonDetail(repository = get<MoviesRepository>()) }
+    factory { CreateMovieList(repository = get<MoviesRepository>()) }
 
     // Profile use cases
     factory { GetUserProfile(repository = get()) }

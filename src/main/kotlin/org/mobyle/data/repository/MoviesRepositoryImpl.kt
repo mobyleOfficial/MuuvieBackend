@@ -277,6 +277,12 @@ class MoviesRepositoryImpl(
         return MovieListListing(totalPages = 0, totalResults = 0, lists = emptyList())
     }
 
+    override suspend fun createMovieList(userId: String, name: String, description: String?): MovieList {
+        return withContext(Dispatchers.IO) {
+            userDatabaseDataSource.createList(userId, name, description)
+        }
+    }
+
     override suspend fun getRecentMovies(userId: String, limit: Int): MovieListing {
         val movies = userDatabaseDataSource.getRecentWatchedMovies(userId, limit)
         return MovieListing(

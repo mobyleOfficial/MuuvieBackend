@@ -1,15 +1,20 @@
 package org.mobyle.routing
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import kotlinx.serialization.Serializable
 import org.mobyle.data.remote.auth.authenticateJWT
 import org.mobyle.data.remote.auth.tryAuthenticateJWT
 import org.mobyle.di.injection
 import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.domain.usecase.movies.*
+
+@Serializable
+data class CreateListRequest(val name: String, val description: String? = null)
 
 fun Route.getMoviesRouting() {
     val validateToken by injection<ValidateToken>()
@@ -32,6 +37,7 @@ fun Route.getMoviesRouting() {
     val getFeaturedLists by injection<GetFeaturedLists>()
     val getRecentMovies by injection<GetRecentMovies>()
     val lookupMovieDetail by injection<LookupMovieDetail>()
+    val createMovieList by injection<CreateMovieList>()
 
     get("/movies") {
         val id = call.parameters["id"]?.toLongOrNull()
@@ -169,6 +175,17 @@ fun Route.getMoviesRouting() {
         val userId = call.parameters["userId"] ?: ""
         val page = call.parameters["page"]?.toIntOrNull() ?: 1
         call.respond(getUserWatchList(userId, page))
+    }
+
+    post("/movies/lists") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val request = call.receive<CreateListRequest>()
+        if (request.name.isBlank()) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "List name must not be blank"))
+            return@post
+        }
+        val movieList = createMovieList(principal.claims.userId, request.name, request.description)
+        call.respond(HttpStatusCode.Created, movieList)
     }
 
     get("/movies/lists") {

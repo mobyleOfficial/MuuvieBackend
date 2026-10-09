@@ -38,4 +38,5 @@ interface MoviesRepository {
     suspend fun likeMovie(userId: String, movieId: Long)
     suspend fun unlikeMovie(userId: String, movieId: Long)
     suspend fun getPersonDetail(personId: Long): PersonDetail?
+    suspend fun createMovieList(userId: String, name: String, description: String?): MovieList
 }

@@ -34,8 +34,9 @@ fun Route.getActivitiesRouting() {
     }
 
     get("/activities/friends") {
+        val principal = call.authenticateJWT(validateToken) ?: return@get
         val page = call.parameters["page"]?.toIntOrNull() ?: 1
-        call.respond(getFriendsActivities(page))
+        call.respond(getFriendsActivities(principal.claims.userId, page))
     }
 
     post("/reviews") {
