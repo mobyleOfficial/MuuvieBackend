@@ -27,5 +27,7 @@ data class MovieDetail(
     val reviewCount: Int = 0,
     val listCount: Int = 0,
     val likeCount: Int = 0,
-    val likedByMe: Boolean = false
+    val likedByMe: Boolean = false,
+    val userRating: Float? = null,
+    val watchStatus: String? = null
 )

@@ -75,7 +75,14 @@ interface UserDatabaseDataSource {
     fun deleteList(userExternalId: String, listId: Long)
     fun addMovieToList(userExternalId: String, listId: Long, movieId: Long)
     fun removeMovieFromList(userExternalId: String, listId: Long, movieId: Long)
+
+    // Movie status & rating
+    fun setMovieStatus(userExternalId: String, movieId: Long, status: String)
+    fun rateMovie(userExternalId: String, movieId: Long, rating: Float)
+    fun getUserMovieStatus(userExternalId: String, movieId: Long): UserMovieStatus?
 }
+
+data class UserMovieStatus(val status: String, val rating: Float?)
 
 class UserDatabaseDataSourceImpl(
     private val movieCatalogDataSource: MovieCatalogDataSource
@@ -964,6 +971,99 @@ class UserDatabaseDataSourceImpl(
             UserListItemsTable.deleteWhere {
                 (UserListItemsTable.listId eq listId) and (UserListItemsTable.movieId eq movieId)
             }
+        }
+    }
+
+    override fun setMovieStatus(userExternalId: String, movieId: Long, status: String) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction
+            val now = Clock.System.now()
+
+            val existing = UserMoviesTable.selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieId) and
+                        (UserMoviesTable.importSource eq "manual")
+                }
+                .firstOrNull()
+
+            if (existing != null) {
+                UserMoviesTable.update({
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieId) and
+                        (UserMoviesTable.importSource eq "manual")
+                }) {
+                    it[UserMoviesTable.status] = status
+                    it[updatedAt] = now
+                    it[watchedAt] = if (status == "watched") now else null
+                }
+            } else {
+                UserMoviesTable.insert {
+                    it[userId] = userDbId
+                    it[UserMoviesTable.movieId] = movieId
+                    it[UserMoviesTable.status] = status
+                    it[importSource] = "manual"
+                    it[watchedAt] = if (status == "watched") now else null
+                    it[createdAt] = now
+                    it[updatedAt] = now
+                }
+            }
+        }
+    }
+
+    override fun rateMovie(userExternalId: String, movieId: Long, rating: Float) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction
+            val now = Clock.System.now()
+
+            val existing = UserMoviesTable.selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieId) and
+                        (UserMoviesTable.importSource eq "manual")
+                }
+                .firstOrNull()
+
+            if (existing != null) {
+                UserMoviesTable.update({
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieId) and
+                        (UserMoviesTable.importSource eq "manual")
+                }) {
+                    it[UserMoviesTable.rating] = rating
+                    it[updatedAt] = now
+                }
+            } else {
+                UserMoviesTable.insert {
+                    it[userId] = userDbId
+                    it[UserMoviesTable.movieId] = movieId
+                    it[UserMoviesTable.rating] = rating
+                    it[status] = "watched"
+                    it[importSource] = "manual"
+                    it[watchedAt] = now
+                    it[createdAt] = now
+                    it[updatedAt] = now
+                }
+            }
+        }
+    }
+
+    override fun getUserMovieStatus(userExternalId: String, movieId: Long): UserMovieStatus? {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId) ?: return@transaction null
+
+            UserMoviesTable.selectAll()
+                .where {
+                    (UserMoviesTable.userId eq userDbId) and
+                        (UserMoviesTable.movieId eq movieId)
+                }
+                .firstOrNull()
+                ?.let { row ->
+                    UserMovieStatus(
+                        status = row[UserMoviesTable.status],
+                        rating = row[UserMoviesTable.rating]
+                    )
+                }
         }
     }
 

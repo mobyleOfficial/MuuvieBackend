@@ -88,7 +88,15 @@ class MoviesRepositoryImpl(
         val likedByMe = if (userId != null) {
             withContext(Dispatchers.IO) { movieLikesDataSource.isLikedByUser(userId, detail.id) }
         } else false
-        return detail.copy(likeCount = likeCount, likedByMe = likedByMe)
+        val userMovieStatus = if (userId != null) {
+            withContext(Dispatchers.IO) { userDatabaseDataSource.getUserMovieStatus(userId, detail.id) }
+        } else null
+        return detail.copy(
+            likeCount = likeCount,
+            likedByMe = likedByMe,
+            userRating = userMovieStatus?.rating,
+            watchStatus = userMovieStatus?.status
+        )
     }
 
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
@@ -308,5 +316,17 @@ class MoviesRepositoryImpl(
             totalResults = movies.size,
             movies = movies
         )
+    }
+
+    override suspend fun setMovieStatus(userId: String, movieId: Long, status: String) {
+        withContext(Dispatchers.IO) {
+            userDatabaseDataSource.setMovieStatus(userId, movieId, status)
+        }
+    }
+
+    override suspend fun rateMovie(userId: String, movieId: Long, rating: Float) {
+        withContext(Dispatchers.IO) {
+            userDatabaseDataSource.rateMovie(userId, movieId, rating)
+        }
     }
 }

@@ -42,4 +42,6 @@ interface MoviesRepository {
     suspend fun deleteMovieList(userId: String, listId: Int)
     suspend fun addMovieToList(userId: String, listId: Int, movieId: Long)
     suspend fun removeMovieFromList(userId: String, listId: Int, movieId: Long)
+    suspend fun setMovieStatus(userId: String, movieId: Long, status: String)
+    suspend fun rateMovie(userId: String, movieId: Long, rating: Float)
 }

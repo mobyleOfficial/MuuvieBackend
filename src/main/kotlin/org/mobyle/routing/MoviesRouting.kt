@@ -20,6 +20,12 @@ data class CreateListRequest(val name: String, val description: String? = null, 
 @Serializable
 data class AddMovieRequest(val movieId: Long)
 
+@Serializable
+data class SetStatusRequest(val status: String)
+
+@Serializable
+data class RateMovieRequest(val rating: Float)
+
 fun Route.getMoviesRouting() {
     val validateToken by injection<ValidateToken>()
     val likeMovie by injection<LikeMovie>()
@@ -45,6 +51,8 @@ fun Route.getMoviesRouting() {
     val deleteMovieList by injection<DeleteMovieList>()
     val addMovieToList by injection<AddMovieToList>()
     val removeMovieFromList by injection<RemoveMovieFromList>()
+    val setMovieStatus by injection<SetMovieStatus>()
+    val rateMovie by injection<RateMovie>()
 
     get("/movies") {
         val id = call.parameters["id"]?.toLongOrNull()
@@ -254,5 +262,38 @@ fun Route.getMoviesRouting() {
         }
         removeMovieFromList(principal.claims.userId, listId, movieId)
         call.respond(HttpStatusCode.NoContent)
+    }
+
+    post("/movies/{id}/status") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val movieId = call.parameters["id"]?.toLongOrNull()
+        if (movieId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
+            return@post
+        }
+        val request = call.receive<SetStatusRequest>()
+        val validStatuses = setOf("watched", "want_to_watch", "dropped")
+        if (request.status !in validStatuses) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Status must be one of: $validStatuses"))
+            return@post
+        }
+        setMovieStatus(principal.claims.userId, movieId, request.status)
+        call.respond(HttpStatusCode.OK)
+    }
+
+    post("/movies/{id}/rate") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val movieId = call.parameters["id"]?.toLongOrNull()
+        if (movieId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid movie ID")
+            return@post
+        }
+        val request = call.receive<RateMovieRequest>()
+        if (request.rating < 0.5f || request.rating > 10.0f) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Rating must be between 0.5 and 10.0"))
+            return@post
+        }
+        rateMovie(principal.claims.userId, movieId, request.rating)
+        call.respond(HttpStatusCode.OK)
     }
 }
