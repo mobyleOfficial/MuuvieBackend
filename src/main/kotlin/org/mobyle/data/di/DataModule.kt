@@ -137,7 +137,7 @@ val dataModule = module {
     }
 
     single<UserActivitiesRepository> {
-        UserActivitiesRepositoryImpl(userDatabaseDataSource = get())
+        UserActivitiesRepositoryImpl(userDatabaseDataSource = get(), moviesRepository = get())
     }
 
     single<CommentsDataSource> {
