@@ -205,9 +205,11 @@ fun Application.configureRouting() {
         getFilmowRouting()
         getWebSocketRouting()
 
-        // TODO: remove — temporary endpoint to reset movie data
+        // TODO: remove — temporary endpoint to reset all data except users
         post("/admin/reset-db") {
             transaction {
+                // FK children first, then parents
+                exec("DELETE FROM movie_tags")
                 exec("DELETE FROM movie_similars")
                 exec("DELETE FROM movie_watch_providers")
                 exec("DELETE FROM movie_cast")
@@ -215,11 +217,19 @@ fun Application.configureRouting() {
                 exec("DELETE FROM user_list_items")
                 exec("DELETE FROM user_lists")
                 exec("DELETE FROM user_movies")
+                exec("DELETE FROM movie_likes")
+                exec("DELETE FROM review_likes")
                 exec("DELETE FROM movies")
                 exec("DELETE FROM people")
+                exec("DELETE FROM genres")
+                exec("DELETE FROM tags")
+                exec("DELETE FROM articles")
+                exec("DELETE FROM user_follows")
+                exec("DELETE FROM token_blocklist")
+                exec("DELETE FROM refresh_tokens")
             }
-            log.info("[ADMIN] Database movie data reset")
-            call.respond(io.ktor.http.HttpStatusCode.OK, mapOf("status" to "reset complete"))
+            log.info("[ADMIN] Full database reset (users preserved)")
+            call.respond(io.ktor.http.HttpStatusCode.OK, mapOf("status" to "reset complete — users preserved"))
         }
     }
 }

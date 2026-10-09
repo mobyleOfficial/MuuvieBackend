@@ -85,8 +85,34 @@ class MoviesRepositoryImpl(
             }
         }
 
-        // 4. Found in DB but no tmdbId — return scraped local data directly.
+        // 4. Found in DB — try title search on TMDB as fallback
         if (localMovie != null) {
+            val titleMatch = try {
+                val title = localMovie.title
+                if (title.isNotBlank()) {
+                    val searchResult = tmdbDataSource.searchMovies(title, page = 1)
+                    val match = searchResult.results.firstOrNull { it.title.equals(title, ignoreCase = true) }
+                        ?: searchResult.results.firstOrNull()
+                    if (match != null) {
+                        val detail = fetchAndCacheDetail(match.id)
+                        movieCatalogDataSource.resolveScrapedMovie(
+                            oldDbId = localMovie.id,
+                            realTmdbId = match.id,
+                            filmowId = localMovie.filmowId
+                        )
+                        detail.copy(id = localMovie.id)
+                    } else null
+                } else null
+            } catch (e: Exception) {
+                log.warn("TMDB title search fallback failed for '${localMovie.title}': ${e.message}")
+                null
+            }
+
+            if (titleMatch != null) {
+                return enrichWithLikes(titleMatch, userId)
+            }
+
+            // 5. No TMDB match — return scraped local data directly.
             return movieCatalogDataSource.getLocalMovieDetailByDbId(localMovie.id)
                 ?.let { enrichWithLikes(it, userId) }
         }
