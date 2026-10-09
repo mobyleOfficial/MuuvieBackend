@@ -44,7 +44,12 @@ class MoviesRepositoryImpl(
             if (similarsCache.isStale || providersCache.isStale) refreshVolatileData(movieId)
             local.copy(similarMovies = similarsCache.data, watchProviders = providersCache.data)
         } else {
-            fetchAndCacheDetail(movieId)
+            try {
+                fetchAndCacheDetail(movieId)
+            } catch (e: Exception) {
+                log.warn("TMDB fetch failed for tmdbId=$movieId: ${e.message}")
+                return MovieDetail(title = "", overview = "")
+            }
         }
         return enrichWithLikes(detail, userId)
     }
@@ -67,10 +72,17 @@ class MoviesRepositoryImpl(
         // 3. Not enriched locally — fetch from TMDB
         val fetchTmdbId = tmdbId ?: localMovie?.tmdbId
         if (fetchTmdbId != null) {
-            val detail = fetchAndCacheDetail(fetchTmdbId)
-            val dbId = localMovie?.id ?: movieCatalogDataSource.findByTmdbId(fetchTmdbId)?.id ?: detail.id
-            val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie?.overview ?: ""
-            return enrichWithLikes(detail.copy(id = dbId, overview = overview), userId)
+            val detail = try {
+                fetchAndCacheDetail(fetchTmdbId)
+            } catch (e: Exception) {
+                log.warn("TMDB fetch failed for tmdbId=$fetchTmdbId: ${e.message}")
+                null
+            }
+            if (detail != null) {
+                val dbId = localMovie?.id ?: movieCatalogDataSource.findByTmdbId(fetchTmdbId)?.id ?: detail.id
+                val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie?.overview ?: ""
+                return enrichWithLikes(detail.copy(id = dbId, overview = overview), userId)
+            }
         }
 
         // 4. Found in DB but no tmdbId — return scraped local data directly.
