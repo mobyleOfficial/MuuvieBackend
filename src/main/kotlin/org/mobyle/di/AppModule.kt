@@ -16,6 +16,7 @@ import org.mobyle.domain.usecase.auth.SignUpUser
 import org.mobyle.domain.usecase.auth.CheckNicknameAvailability
 import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.domain.usecase.movies.*
+import org.mobyle.domain.usecase.profile.AddMovieToShelf
 import org.mobyle.domain.usecase.profile.GetPublicProfile
 import org.mobyle.domain.usecase.profile.GetUserProfile
 import org.mobyle.domain.usecase.profile.CreateShelf
@@ -68,6 +69,7 @@ val appModule = module {
     factory { GetPublicProfile(repository = get()) }
     factory { GetUserShelves(userDatabaseDataSource = get()) }
     factory { CreateShelf(userDatabaseDataSource = get()) }
+    factory { AddMovieToShelf(userDatabaseDataSource = get()) }
 
     // Social use cases
     factory { FollowUser(repository = get()) }

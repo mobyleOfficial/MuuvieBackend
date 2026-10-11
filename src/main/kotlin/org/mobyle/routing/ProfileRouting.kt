@@ -14,6 +14,7 @@ import org.mobyle.domain.model.UserProfile
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.domain.usecase.profile.GetPublicProfile
 import org.mobyle.domain.usecase.profile.GetUserProfile
+import org.mobyle.domain.usecase.profile.AddMovieToShelf
 import org.mobyle.domain.usecase.profile.CreateShelf
 import org.mobyle.domain.usecase.profile.GetUserShelves
 import org.mobyle.domain.usecase.profile.UpdateUserProfile
@@ -27,6 +28,7 @@ fun Route.getProfileRouting() {
     val getPublicProfile by injection<GetPublicProfile>()
     val getUserShelves by injection<GetUserShelves>()
     val createShelf by injection<CreateShelf>()
+    val addMovieToShelf by injection<AddMovieToShelf>()
     val validateToken by injection<ValidateToken>()
     val userDatabaseDataSource by injection<UserDatabaseDataSource>()
     val scrapeStatusManager by injection<ScrapeStatusManager>()
@@ -102,6 +104,18 @@ fun Route.getProfileRouting() {
             visibility = request.visibility
         )
         call.respond(HttpStatusCode.Created, shelf)
+    }
+
+    post("/profile/shelves/{id}/movies") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val shelfId = call.parameters["id"]?.toLongOrNull()
+        if (shelfId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid shelf ID")
+            return@post
+        }
+        val request = call.receive<AddMovieRequest>()
+        addMovieToShelf(principal.claims.userId, shelfId, request.movieId)
+        call.respond(HttpStatusCode.Created)
     }
 
     get("/profile/{userId}") {
