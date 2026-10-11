@@ -49,7 +49,9 @@ object DatabaseConfig {
                 TokenBlocklistTable,
                 RefreshTokensTable,
                 MovieLikesTable,
-                ReviewLikesTable
+                ReviewLikesTable,
+                LocadorasTable,
+                LocadoraShelvesTable
             )
         }
     }

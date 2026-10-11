@@ -15,9 +15,14 @@ import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.domain.usecase.profile.GetPublicProfile
 import org.mobyle.domain.usecase.profile.GetUserProfile
 import org.mobyle.domain.usecase.profile.AddMovieToShelf
+import org.mobyle.domain.usecase.profile.AddShelfToLocadora
+import org.mobyle.domain.usecase.profile.CreateLocadora
 import org.mobyle.domain.usecase.profile.CreateShelf
+import org.mobyle.domain.usecase.profile.GetUserLocadoras
 import org.mobyle.domain.usecase.profile.GetUserShelves
 import org.mobyle.domain.usecase.profile.UpdateUserProfile
+import org.mobyle.model.AddShelfToLocadoraRequest
+import org.mobyle.model.CreateLocadoraRequest
 import org.mobyle.model.CreateShelfRequest
 import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.data.service.ScrapeStatusManager
@@ -29,6 +34,9 @@ fun Route.getProfileRouting() {
     val getUserShelves by injection<GetUserShelves>()
     val createShelf by injection<CreateShelf>()
     val addMovieToShelf by injection<AddMovieToShelf>()
+    val getUserLocadoras by injection<GetUserLocadoras>()
+    val createLocadora by injection<CreateLocadora>()
+    val addShelfToLocadora by injection<AddShelfToLocadora>()
     val validateToken by injection<ValidateToken>()
     val userDatabaseDataSource by injection<UserDatabaseDataSource>()
     val scrapeStatusManager by injection<ScrapeStatusManager>()
@@ -115,6 +123,36 @@ fun Route.getProfileRouting() {
         }
         val request = call.receive<AddMovieRequest>()
         addMovieToShelf(principal.claims.userId, shelfId, request.movieId)
+        call.respond(HttpStatusCode.Created)
+    }
+
+    get("/profile/locadoras") {
+        val principal = call.authenticateJWT(validateToken) ?: return@get
+        val page = call.parameters["page"]?.toIntOrNull() ?: 1
+        call.respond(getUserLocadoras(principal.claims.userId, page))
+    }
+
+    post("/profile/locadoras") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val request = call.receive<CreateLocadoraRequest>()
+        val locadora = createLocadora(
+            userId = principal.claims.userId,
+            name = request.name,
+            description = request.description,
+            visibility = request.visibility
+        )
+        call.respond(HttpStatusCode.Created, locadora)
+    }
+
+    post("/profile/locadoras/{id}/shelves") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val locadoraId = call.parameters["id"]?.toLongOrNull()
+        if (locadoraId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid locadora ID")
+            return@post
+        }
+        val request = call.receive<AddShelfToLocadoraRequest>()
+        addShelfToLocadora(principal.claims.userId, locadoraId, request.shelfId)
         call.respond(HttpStatusCode.Created)
     }
 

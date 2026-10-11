@@ -13,6 +13,8 @@ import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.upsert
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.not
+import org.mobyle.data.local.database.LocadoraShelvesTable
+import org.mobyle.data.local.database.LocadorasTable
 import org.mobyle.data.local.database.MoviesTable
 import org.mobyle.data.local.database.UserFollowsTable
 import org.mobyle.data.local.database.UserListItemsTable
@@ -22,6 +24,7 @@ import org.mobyle.data.local.database.UsersTable
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.domain.model.FilmowList
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.mobyle.domain.model.Locadora
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieList
 import org.mobyle.domain.model.MovieListDetail
@@ -29,6 +32,7 @@ import org.mobyle.domain.model.MovieShelf
 import org.mobyle.domain.model.ProfileUser
 import org.mobyle.domain.model.SocialUser
 import org.mobyle.domain.model.User
+import org.mobyle.model.LocadoraListing
 import org.mobyle.model.MovieListing
 import org.mobyle.model.MovieListListing
 import org.mobyle.model.MovieShelfListing
@@ -80,6 +84,11 @@ interface UserDatabaseDataSource {
     fun deleteList(userExternalId: String, listId: Long)
     fun addMovieToList(userExternalId: String, listId: Long, movieId: Long)
     fun removeMovieFromList(userExternalId: String, listId: Long, movieId: Long)
+
+    // Locadoras
+    fun createLocadora(userExternalId: String, name: String, description: String?, visibility: String): Locadora
+    fun getUserLocadoras(userExternalId: String, page: Int, pageSize: Int = 20): LocadoraListing
+    fun addShelfToLocadora(userExternalId: String, locadoraId: Long, shelfId: Long)
 
     // Movie status & rating
     fun setMovieStatus(userExternalId: String, movieId: Long, status: String)
@@ -1087,6 +1096,167 @@ class UserDatabaseDataSourceImpl(
 
             UserListItemsTable.deleteWhere {
                 (UserListItemsTable.listId eq listId) and (UserListItemsTable.movieId eq movieId)
+            }
+        }
+    }
+
+    // ── Locadoras ─────────────────────────────────────────────────────────
+
+    override fun createLocadora(
+        userExternalId: String,
+        name: String,
+        description: String?,
+        visibility: String
+    ): Locadora {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            val now = Clock.System.now()
+            val locadoraId = LocadorasTable.insertAndGetId {
+                it[userId] = userDbId
+                it[LocadorasTable.name] = name
+                it[LocadorasTable.description] = description
+                it[LocadorasTable.visibility] = visibility
+                it[createdAt] = now
+            }
+
+            Locadora(
+                id = locadoraId.value.toInt(),
+                name = name,
+                description = description,
+                shelvesCount = 0,
+                totalMoviesCount = 0,
+                shelves = emptyList(),
+                date = now.toString()
+            )
+        }
+    }
+
+    override fun getUserLocadoras(userExternalId: String, page: Int, pageSize: Int): LocadoraListing {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: return@transaction LocadoraListing(0, 0, emptyList())
+
+            val totalResults = LocadorasTable.selectAll()
+                .where { LocadorasTable.userId eq userDbId }
+                .count().toInt()
+
+            val locadoras = LocadorasTable.selectAll()
+                .where { LocadorasTable.userId eq userDbId }
+                .orderBy(LocadorasTable.createdAt, SortOrder.DESC)
+                .limit(pageSize, offset = ((page - 1) * pageSize).toLong())
+                .map { row ->
+                    val locadoraDbId = row[LocadorasTable.id].value
+
+                    // Get shelves in this locadora
+                    val shelfIds = LocadoraShelvesTable.selectAll()
+                        .where { LocadoraShelvesTable.locadoraId eq locadoraDbId }
+                        .orderBy(LocadoraShelvesTable.position, SortOrder.ASC)
+                        .map { it[LocadoraShelvesTable.shelfId].value }
+
+                    val shelves = if (shelfIds.isNotEmpty()) {
+                        UserListsTable.selectAll()
+                            .where { UserListsTable.id inList shelfIds }
+                            .map { shelfRow ->
+                                val listDbId = shelfRow[UserListsTable.id].value
+
+                                val totalMoviesCount = (UserListItemsTable innerJoin MoviesTable)
+                                    .selectAll()
+                                    .where { UserListItemsTable.listId eq listDbId }
+                                    .count().toInt()
+
+                                val movies = (UserListItemsTable innerJoin MoviesTable)
+                                    .selectAll()
+                                    .where { UserListItemsTable.listId eq listDbId }
+                                    .orderBy(UserListItemsTable.position, SortOrder.ASC)
+                                    .limit(5)
+                                    .map { movieRow ->
+                                        Movie(
+                                            id = movieRow[MoviesTable.id].value,
+                                            tmdbId = movieRow[MoviesTable.tmdbId],
+                                            title = movieRow[MoviesTable.title],
+                                            posterPath = movieRow[MoviesTable.posterPath],
+                                            overview = movieRow[MoviesTable.overview] ?: "",
+                                            backdropPath = movieRow[MoviesTable.backdropPath],
+                                            voteAverage = movieRow[MoviesTable.voteAverage]?.toDouble() ?: 0.0
+                                        )
+                                    }
+
+                                val movieIdsInList = UserListItemsTable
+                                    .selectAll()
+                                    .where { UserListItemsTable.listId eq listDbId }
+                                    .map { it[UserListItemsTable.movieId].value }
+
+                                val moviesWatchedCount = if (movieIdsInList.isNotEmpty()) {
+                                    UserMoviesTable.selectAll()
+                                        .where {
+                                            (UserMoviesTable.userId eq userDbId) and
+                                                (UserMoviesTable.movieId inList movieIdsInList) and
+                                                (UserMoviesTable.status eq "watched")
+                                        }
+                                        .count().toInt()
+                                } else 0
+
+                                MovieShelf(
+                                    id = listDbId.toInt(),
+                                    name = shelfRow[UserListsTable.name],
+                                    date = shelfRow[UserListsTable.createdAt].toString(),
+                                    moviesWatchedCount = moviesWatchedCount,
+                                    totalMoviesCount = totalMoviesCount,
+                                    movies = movies,
+                                    currentPage = 1,
+                                    totalPages = (totalMoviesCount + 4) / 5,
+                                    color = shelfRow[UserListsTable.color]
+                                )
+                            }
+                    } else emptyList()
+
+                    val totalMoviesCount = shelves.sumOf { it.totalMoviesCount }
+
+                    Locadora(
+                        id = locadoraDbId.toInt(),
+                        name = row[LocadorasTable.name],
+                        description = row[LocadorasTable.description],
+                        shelvesCount = shelves.size,
+                        totalMoviesCount = totalMoviesCount,
+                        shelves = shelves,
+                        date = row[LocadorasTable.createdAt].toString()
+                    )
+                }
+
+            LocadoraListing(
+                totalPages = (totalResults + pageSize - 1) / pageSize,
+                totalResults = totalResults,
+                locadoras = locadoras
+            )
+        }
+    }
+
+    override fun addShelfToLocadora(userExternalId: String, locadoraId: Long, shelfId: Long) {
+        transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            LocadorasTable.selectAll()
+                .where { (LocadorasTable.id eq locadoraId) and (LocadorasTable.userId eq userDbId) }
+                .firstOrNull()
+                ?: throw IllegalArgumentException("Locadora not found or not owned by user")
+
+            UserListsTable.selectAll()
+                .where { (UserListsTable.id eq shelfId) and (UserListsTable.userId eq userDbId) }
+                .firstOrNull()
+                ?: throw IllegalArgumentException("Shelf not found or not owned by user")
+
+            val maxPosition = LocadoraShelvesTable.selectAll()
+                .where { LocadoraShelvesTable.locadoraId eq locadoraId }
+                .maxOfOrNull { it[LocadoraShelvesTable.position] } ?: -1
+
+            LocadoraShelvesTable.insert {
+                it[LocadoraShelvesTable.locadoraId] = locadoraId
+                it[LocadoraShelvesTable.shelfId] = shelfId
+                it[position] = maxPosition + 1
+                it[addedAt] = Clock.System.now()
             }
         }
     }

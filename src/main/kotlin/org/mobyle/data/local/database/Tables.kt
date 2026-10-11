@@ -197,6 +197,25 @@ object MovieLikesTable : LongIdTable("movie_likes") {
     }
 }
 
+object LocadorasTable : LongIdTable("locadoras") {
+    val userId = reference("user_id", UsersTable)
+    val name = varchar("name", 255)
+    val description = text("description").nullable()
+    val visibility = varchar("visibility", 20).default("public")
+    val createdAt = timestamp("created_at")
+}
+
+object LocadoraShelvesTable : LongIdTable("locadora_shelves") {
+    val locadoraId = reference("locadora_id", LocadorasTable)
+    val shelfId = reference("shelf_id", UserListsTable)
+    val position = integer("position")
+    val addedAt = timestamp("added_at")
+
+    init {
+        uniqueIndex("uq_locadora_shelf", locadoraId, shelfId)
+    }
+}
+
 object ReviewLikesTable : LongIdTable("review_likes") {
     val userExternalId = varchar("user_external_id", 255).index()
     val reviewId = varchar("review_id", 255).index()
