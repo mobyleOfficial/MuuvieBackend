@@ -129,6 +129,8 @@ object UserListsTable : LongIdTable("user_lists") {
     val name = varchar("name", 255)
     val description = text("description").nullable()
     val isPublic = bool("is_public").default(true)
+    val color = varchar("color", 7).nullable()
+    val visibility = varchar("visibility", 20).default("public")
     val createdAt = timestamp("created_at")
 }
 

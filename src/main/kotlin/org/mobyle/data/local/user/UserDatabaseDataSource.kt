@@ -76,6 +76,7 @@ interface UserDatabaseDataSource {
     fun getMyFollowing(currentUserExternalId: String): List<SocialUser>
     fun searchUsers(query: String, currentUserExternalId: String): List<SocialUser>
     fun createList(userExternalId: String, name: String, description: String?, movieIds: List<Long> = emptyList()): MovieList
+    fun createShelf(userExternalId: String, name: String, description: String?, color: String?, visibility: String): MovieShelf
     fun deleteList(userExternalId: String, listId: Long)
     fun addMovieToList(userExternalId: String, listId: Long, movieId: Long)
     fun removeMovieFromList(userExternalId: String, listId: Long, movieId: Long)
@@ -995,6 +996,41 @@ class UserDatabaseDataSourceImpl(
                 description = description,
                 movieCount = movieIds.size,
                 posterPaths = posterPaths
+            )
+        }
+    }
+
+    override fun createShelf(
+        userExternalId: String,
+        name: String,
+        description: String?,
+        color: String?,
+        visibility: String
+    ): MovieShelf {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: throw IllegalArgumentException("User not found")
+
+            val now = Clock.System.now()
+            val listId = UserListsTable.insertAndGetId {
+                it[userId] = userDbId
+                it[UserListsTable.name] = name
+                it[UserListsTable.description] = description
+                it[UserListsTable.color] = color
+                it[UserListsTable.visibility] = visibility
+                it[isPublic] = visibility == "public"
+                it[createdAt] = now
+            }
+
+            MovieShelf(
+                id = listId.value.toInt(),
+                name = name,
+                date = now.toString(),
+                moviesWatchedCount = 0,
+                totalMoviesCount = 0,
+                movies = emptyList(),
+                currentPage = 1,
+                totalPages = 0
             )
         }
     }
