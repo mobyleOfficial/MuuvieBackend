@@ -13,6 +13,7 @@ import org.mobyle.domain.model.UserProfile
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.domain.usecase.profile.GetPublicProfile
 import org.mobyle.domain.usecase.profile.GetUserProfile
+import org.mobyle.domain.usecase.profile.GetUserShelves
 import org.mobyle.domain.usecase.profile.UpdateUserProfile
 import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.data.service.ScrapeStatusManager
@@ -21,6 +22,7 @@ fun Route.getProfileRouting() {
     val getUserProfile by injection<GetUserProfile>()
     val updateUserProfile by injection<UpdateUserProfile>()
     val getPublicProfile by injection<GetPublicProfile>()
+    val getUserShelves by injection<GetUserShelves>()
     val validateToken by injection<ValidateToken>()
     val userDatabaseDataSource by injection<UserDatabaseDataSource>()
     val scrapeStatusManager by injection<ScrapeStatusManager>()
@@ -77,6 +79,12 @@ fun Route.getProfileRouting() {
             isScraping = scrapeStatusManager.isScraping(user.id)
         )
         call.respond(HttpStatusCode.OK, updatedProfile)
+    }
+
+    get("/profile/shelves") {
+        val principal = call.authenticateJWT(validateToken) ?: return@get
+        val page = call.parameters["page"]?.toIntOrNull() ?: 1
+        call.respond(getUserShelves(principal.claims.userId, page))
     }
 
     get("/profile/{userId}") {

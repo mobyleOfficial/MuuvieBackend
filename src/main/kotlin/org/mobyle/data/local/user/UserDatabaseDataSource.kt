@@ -21,14 +21,17 @@ import org.mobyle.data.local.database.UserMoviesTable
 import org.mobyle.data.local.database.UsersTable
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.domain.model.FilmowList
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieList
 import org.mobyle.domain.model.MovieListDetail
+import org.mobyle.domain.model.MovieShelf
 import org.mobyle.domain.model.ProfileUser
 import org.mobyle.domain.model.SocialUser
 import org.mobyle.domain.model.User
 import org.mobyle.model.MovieListing
 import org.mobyle.model.MovieListListing
+import org.mobyle.model.MovieShelfListing
 import org.slf4j.LoggerFactory
 
 interface UserDatabaseDataSource {
@@ -44,6 +47,7 @@ interface UserDatabaseDataSource {
     fun getFavoriteMovies(userExternalId: String, page: Int, pageSize: Int = 20): MovieListing
     fun getWatchlistMovies(userExternalId: String, page: Int, pageSize: Int = 20): MovieListing
     fun getWatchedMovies(userExternalId: String, page: Int, pageSize: Int = 20): MovieListing
+    fun getUserShelves(userExternalId: String, page: Int, pageSize: Int = 20): MovieShelfListing
     fun getUserLists(userExternalId: String, page: Int, pageSize: Int = 20): MovieListListing
     fun getListDetail(listId: Long, page: Int, pageSize: Int = 20): MovieListDetail
     fun importMovies(userExternalId: String, movies: List<Movie>, status: String, isFavorite: Boolean = false): List<Movie>
@@ -309,6 +313,81 @@ class UserDatabaseDataSourceImpl(
                 totalPages = (totalResults + pageSize - 1) / pageSize,
                 totalResults = totalResults,
                 movies = movies
+            )
+        }
+    }
+
+    override fun getUserShelves(userExternalId: String, page: Int, pageSize: Int): MovieShelfListing {
+        return transaction {
+            val userDbId = resolveUserDbId(userExternalId)
+                ?: return@transaction MovieShelfListing(0, 0, emptyList())
+
+            val totalResults = UserListsTable.selectAll()
+                .where { UserListsTable.userId eq userDbId }
+                .count().toInt()
+
+            val shelves = UserListsTable.selectAll()
+                .where { UserListsTable.userId eq userDbId }
+                .orderBy(UserListsTable.createdAt, SortOrder.DESC)
+                .limit(pageSize, offset = ((page - 1) * pageSize).toLong())
+                .map { row ->
+                    val listDbId = row[UserListsTable.id].value
+
+                    val totalMoviesCount = (UserListItemsTable innerJoin MoviesTable)
+                        .selectAll()
+                        .where { UserListItemsTable.listId eq listDbId }
+                        .count().toInt()
+
+                    // Get preview movies (first 5)
+                    val movies = (UserListItemsTable innerJoin MoviesTable)
+                        .selectAll()
+                        .where { UserListItemsTable.listId eq listDbId }
+                        .orderBy(UserListItemsTable.position, SortOrder.ASC)
+                        .limit(5)
+                        .map { movieRow ->
+                            Movie(
+                                id = movieRow[MoviesTable.id].value,
+                                tmdbId = movieRow[MoviesTable.tmdbId],
+                                title = movieRow[MoviesTable.title],
+                                posterPath = movieRow[MoviesTable.posterPath],
+                                overview = movieRow[MoviesTable.overview] ?: "",
+                                backdropPath = movieRow[MoviesTable.backdropPath],
+                                voteAverage = movieRow[MoviesTable.voteAverage]?.toDouble() ?: 0.0
+                            )
+                        }
+
+                    // Count watched movies in this list
+                    val movieIdsInList = UserListItemsTable
+                        .selectAll()
+                        .where { UserListItemsTable.listId eq listDbId }
+                        .map { it[UserListItemsTable.movieId].value }
+
+                    val moviesWatchedCount = if (movieIdsInList.isNotEmpty()) {
+                        UserMoviesTable.selectAll()
+                            .where {
+                                (UserMoviesTable.userId eq userDbId) and
+                                    (UserMoviesTable.movieId inList movieIdsInList) and
+                                    (UserMoviesTable.status eq "watched")
+                            }
+                            .count().toInt()
+                    } else 0
+
+                    MovieShelf(
+                        id = listDbId.toInt(),
+                        name = row[UserListsTable.name],
+                        date = row[UserListsTable.createdAt].toString(),
+                        moviesWatchedCount = moviesWatchedCount,
+                        totalMoviesCount = totalMoviesCount,
+                        movies = movies,
+                        currentPage = 1,
+                        totalPages = (totalMoviesCount + 4) / 5
+                    )
+                }
+
+            MovieShelfListing(
+                totalPages = (totalResults + pageSize - 1) / pageSize,
+                totalResults = totalResults,
+                shelves = shelves
             )
         }
     }
