@@ -11,5 +11,6 @@ data class MovieShelf(
     val totalMoviesCount: Int,
     val movies: List<Movie>,
     val currentPage: Int,
-    val totalPages: Int
+    val totalPages: Int,
+    val color: String? = null
 )

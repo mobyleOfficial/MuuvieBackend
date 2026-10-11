@@ -381,7 +381,8 @@ class UserDatabaseDataSourceImpl(
                         totalMoviesCount = totalMoviesCount,
                         movies = movies,
                         currentPage = 1,
-                        totalPages = (totalMoviesCount + 4) / 5
+                        totalPages = (totalMoviesCount + 4) / 5,
+                        color = row[UserListsTable.color]
                     )
                 }
 
@@ -1030,7 +1031,8 @@ class UserDatabaseDataSourceImpl(
                 totalMoviesCount = 0,
                 movies = emptyList(),
                 currentPage = 1,
-                totalPages = 0
+                totalPages = 0,
+                color = color
             )
         }
     }
