@@ -24,11 +24,13 @@ import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieFacts
 import org.mobyle.domain.model.Page
 import org.mobyle.domain.model.PageRequest
+import org.mobyle.domain.model.SocialEvent
 import org.mobyle.domain.model.User
 import org.mobyle.domain.model.vocabulary.ActivityType
 import org.mobyle.domain.model.vocabulary.ChallengeLinkSource
 import org.mobyle.domain.model.vocabulary.MaratonaStatus
 import org.mobyle.domain.repository.MaratonaCatalog
+import org.mobyle.domain.repository.SocialNotifier
 import org.mobyle.domain.usecase.feed.ActivityPublisher
 import org.mobyle.domain.usecase.maratonas.AdvanceMaratonas
 import org.mobyle.domain.usecase.maratonas.CategoryInput
@@ -80,7 +82,8 @@ class MaratonaDataSourceImplTest {
     private val challenges = GetMaratonaChallenges(maratonas, access)
     private val link = SetChallengeLink(maratonas, access, shelves, activities)
     private val progress = GetMaratonaProgress(access, ActivityRepositoryImpl(activityData))
-    private val advance = AdvanceMaratonas(maratonas, activities) { today }
+    private val notifier = FakeNotifier()
+    private val advance = AdvanceMaratonas(maratonas, activities, notifier) { today }
     private val catalog = FakeCatalog()
     private val logSession = LogWatchSession(
         WatchRepositoryImpl(WatchDataSourceImpl()), shelves, activities, MaratonaAutoLinker(maratonas, catalog, activities)
@@ -298,7 +301,11 @@ class MaratonaDataSourceImplTest {
         assertEquals(MaratonaStatus.FINISHED, access.get("outubro").status)
         val finished = progress(null, "outubro", null).results.filter { it.type == ActivityType.FINISHED_MARATONA }
         assertEquals(listOf("bia"), finished.map { it.actor.id })
+        val started = SocialEvent.MaratonaStarted("outubro", "Terror 70")
+        val over = SocialEvent.MaratonaFinished("outubro", "Terror 70")
+        assertEquals(listOf("bia" to started, "caio" to started, "bia" to over, "caio" to over), notifier.events)
         assertEquals(0 to 0, advance())
+        assertEquals(4, notifier.events.size)
     }
 
     // ── Listing (F7.2) ──────────────────────────────────────────────────────
@@ -419,6 +426,14 @@ class MaratonaDataSourceImplTest {
         movieId = id, genreIds = genres, year = year, countries = countries, originalLanguage = null,
         directorIds = emptySet(), castIds = emptySet(), runtime = null, keywordIds = emptySet(), voteAverage = null
     )
+
+    private class FakeNotifier : SocialNotifier {
+        val events = mutableListOf<Pair<String, SocialEvent>>()
+
+        override fun notify(userId: String, event: SocialEvent) {
+            events += userId to event
+        }
+    }
 
     private class FakeCatalog : MaratonaCatalog {
         val facts = mutableMapOf<Long, MovieFacts>()

@@ -311,7 +311,7 @@ val appModule = module {
     factory { GetMaratonaProgress(access = get(), activities = get()) }
     factory { GetMaratonaTemplates() }
     factory { CreateMaratonaFromTemplate(create = get()) }
-    factory { AdvanceMaratonas(repository = get(), activities = get()) }
+    factory { AdvanceMaratonas(repository = get(), activities = get(), notifier = get()) }
 
     // CineClubes (B8)
     factory { CineClubeAccess(repository = get()) }

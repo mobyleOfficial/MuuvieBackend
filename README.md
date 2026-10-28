@@ -254,7 +254,7 @@ Lists of the feed and of the Sussurros use the cursor envelope `{ results, nextC
 | PUT/DELETE | `/users/me/devices` | `{ platform: android\|ios\|web, token, locale? }` registers a push token; DELETE takes `{ token }` or `?token=` |
 | GET/PUT | `/users/me/notification-prefs` | `{ messages, newFollowers, loves, maratonas, cineclubes }`, all on by default |
 
-On the WebSocket (`/api/v1/ws`, ticket from `POST /api/v1/ws/token`), the user gets `message` (`conversationId`, `messageId`, `senderId`, `name`, `body`, `system`, `createdAt`), `unread` (`conversations`, `messages`), `new_follower` (`userId`, `name`) and `activity_loved` (`activityId`, `userId`, `name`). Push notifications (FCM, Android channel `social`) carry the same fields plus `type`, in the device's language (pt, en or es).
+On the WebSocket (`/api/v1/ws`, ticket from `POST /api/v1/ws/token`), the user gets `message` (`conversationId`, `messageId`, `senderId`, `name`, `body`, `system`, `createdAt`), `unread` (`conversations`, `messages`), `new_follower` (`userId`, `name`) and `activity_loved` (`activityId`, `userId`, `name`). Push notifications (FCM, Android channel `social`) carry the same fields plus `type`, in the device's language (pt, en or es). Three events also reach the WebSocket and push (B15): `maratona_started` and `maratona_finished` (`slug`, `title`) to every participant, preference `maratonas`, and `import_updated` (`jobId`, `source`, `status`, `watched`) when an import waits for its preview, finishes or fails, always sent.
 
 ### Maratonas
 

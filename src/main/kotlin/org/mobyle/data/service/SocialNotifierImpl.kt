@@ -65,6 +65,9 @@ class SocialNotifierImpl(
         is SocialEvent.NewFollower -> prefs.newFollowers
         is SocialEvent.ActivityLoved -> prefs.loves
         is SocialEvent.CineClubeDebate -> prefs.cineclubes
+        is SocialEvent.MaratonaStarted, is SocialEvent.MaratonaFinished -> prefs.maratonas
+        // The answer to something the user started, so it has no preference.
+        is SocialEvent.ImportUpdated -> true
         is SocialEvent.MessageSent, is SocialEvent.UnreadChanged, is SocialEvent.WatchPartyChanged -> false
     }
 }
@@ -92,7 +95,41 @@ internal object PushTexts {
                 "es" -> "Hoy es el día del debate de ${event.movieTitle}"
                 else -> "Hoje é dia de debate de ${event.movieTitle}"
             }.take(BODY_MAX)
+            is SocialEvent.MaratonaStarted -> event.title to when (language) {
+                "en" -> "The maratona started. Time to press play!"
+                "es" -> "La maratón empezó. ¡A darle play!"
+                else -> "A maratona começou. Hora do play!"
+            }
+            is SocialEvent.MaratonaFinished -> event.title to when (language) {
+                "en" -> "The maratona is over. See how you did"
+                "es" -> "La maratón terminó. Mira cómo te fue"
+                else -> "A maratona terminou. Veja como você foi"
+            }
+            is SocialEvent.ImportUpdated -> importText(event, language)
             is SocialEvent.MessageSent, is SocialEvent.UnreadChanged, is SocialEvent.WatchPartyChanged -> null
+        }
+    }
+
+    private fun importText(event: SocialEvent.ImportUpdated, language: String?): Pair<String, String>? {
+        val source = event.source.replaceFirstChar { it.uppercase() }
+        val n = event.watched
+        return when (event.status) {
+            "preview" -> when (language) {
+                "en" -> "Your $source import is ready" to "We found $n watched movies. Review and confirm"
+                "es" -> "Tu importación de $source está lista" to "Encontramos $n películas vistas. Revisa y confirma"
+                else -> "Sua importação do $source está pronta" to "Encontramos $n filmes assistidos. Revise e confirme"
+            }
+            "done" -> when (language) {
+                "en" -> "$source import finished" to "$n movies are now in Watched"
+                "es" -> "Importación de $source terminada" to "$n películas ya están en Ya la vi"
+                else -> "Importação do $source concluída" to "$n filmes já estão em Já assisti"
+            }
+            "failed" -> when (language) {
+                "en" -> "$source import failed" to "Open the app to try again"
+                "es" -> "La importación de $source falló" to "Abre la app para intentarlo de nuevo"
+                else -> "A importação do $source falhou" to "Abra o app para tentar de novo"
+            }
+            else -> null
         }
     }
 }

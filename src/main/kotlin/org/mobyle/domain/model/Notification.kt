@@ -69,6 +69,26 @@ sealed class SocialEvent(val type: String) {
     data class CineClubeDebate(val slug: String, val title: String, val movieTitle: String) : SocialEvent("cineclube_debate") {
         override val data get() = mapOf("slug" to slug, "title" to title, "movie" to movieTitle)
     }
+
+    /** A maratona the user joined started (B15.1). */
+    data class MaratonaStarted(val slug: String, val title: String) : SocialEvent("maratona_started") {
+        override val data get() = mapOf("slug" to slug, "title" to title)
+    }
+
+    /** A maratona the user joined finished (B15.1). */
+    data class MaratonaFinished(val slug: String, val title: String) : SocialEvent("maratona_finished") {
+        override val data get() = mapOf("slug" to slug, "title" to title)
+    }
+
+    /**
+     * An import of the user stopped running (B15.2): read and waiting for the preview to be
+     * confirmed, written, or failed. [watched] is the number of watched movies read or written.
+     */
+    data class ImportUpdated(val jobId: Long, val source: String, val status: String, val watched: Int) :
+        SocialEvent("import_updated") {
+        override val data
+            get() = mapOf("jobId" to jobId.toString(), "source" to source, "status" to status, "watched" to watched.toString())
+    }
 }
 
 /** The name shown in notifications: the display name, else the @handle, else the username. */

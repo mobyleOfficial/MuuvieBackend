@@ -14,6 +14,7 @@ import org.mobyle.domain.model.ImportOptions
 import org.mobyle.domain.model.ImportedMovie
 import org.mobyle.domain.model.MovieCandidate
 import org.mobyle.domain.model.MovieResolution
+import org.mobyle.domain.model.SocialEvent
 import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
@@ -21,13 +22,15 @@ import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
 import org.mobyle.domain.repository.ImportSourceReader
 import org.mobyle.domain.repository.MovieResolver
+import org.mobyle.domain.repository.SocialNotifier
 import org.mobyle.domain.usecase.feed.ActivityPublisher
 import org.slf4j.LoggerFactory
 
 /**
  * Runs import jobs in the background, at most [MAX_CONCURRENT] at a time (B3). The state lives
  * in import_jobs, so the app can poll it; each change is also pushed on the user's WebSocket as
- * `import_progress` with the job id.
+ * `import_progress` with the job id. When a job waits for the preview, finishes or fails, the
+ * user also gets an `import_updated` through the [SocialNotifier], which reaches them by push.
  */
 class ImportJobRunner(
     private val repository: ImportRepository,
@@ -35,7 +38,8 @@ class ImportJobRunner(
     private val resolver: MovieResolver,
     private val enrichment: MovieEnrichmentService,
     private val webSocketManager: WebSocketManager,
-    private val activities: ActivityPublisher
+    private val activities: ActivityPublisher,
+    private val notifier: SocialNotifier
 ) : ImportJobQueue {
     private val log = LoggerFactory.getLogger(ImportJobRunner::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -58,6 +62,7 @@ class ImportJobRunner(
             // False when the user cancelled while the source was being read: the bundle is dropped.
             if (!repository.saveRead(job.id, bundle)) return@run
             notify(job.id)
+            if (!autoConfirm) announce(job.id)
             if (autoConfirm && repository.confirm(job.id, ImportOptions())) {
                 writeJob(repository.getJob(job.id)!!)
             }
@@ -79,6 +84,7 @@ class ImportJobRunner(
         }
         repository.finish(job.id, counts)
         notify(job.id)
+        announce(job.id)
         // The imported movies are enriched now instead of waiting for the background loop.
         enrichment.enrichImported(job.source, chosen.distinctMovies.map { it.externalId })
         activities.moviesImported(job.userId, job.id, job.source, counts.watched, counts.watchlist)
@@ -145,6 +151,7 @@ class ImportJobRunner(
                     log.error("[IMPORT] Job ${job.id} failed (${job.source.wireValue} @${job.inputRef}): ${e.message}", e)
                     repository.transition(job.id, ImportStatus.ACTIVE, ImportStatus.FAILED, failure)
                     notify(job.id)
+                    announce(job.id)
                 }
             }
         }
@@ -165,6 +172,18 @@ class ImportJobRunner(
                 )
             )
         )
+    }
+
+    /** Tells the user an import stopped running (preview, done or failed), by push too (B15.2). */
+    private fun announce(jobId: Long) {
+        val job = repository.getJob(jobId) ?: return
+        val watched = when (job.status) {
+            ImportStatus.PREVIEW -> job.preview?.watched ?: 0
+            ImportStatus.DONE -> job.counts?.watched ?: 0
+            ImportStatus.FAILED -> 0
+            else -> return
+        }
+        notifier.notify(job.userId, SocialEvent.ImportUpdated(job.id, job.source.wireValue, job.status.wireValue, watched))
     }
 
     private companion object {
