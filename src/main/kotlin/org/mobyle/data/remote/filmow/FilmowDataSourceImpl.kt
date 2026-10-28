@@ -42,6 +42,10 @@ class FilmowDataSourceImpl : FilmowDataSource {
             command.add(cookies)
         }
 
+        log.info(
+            "[SCRAPE] Starting for @$username — python=$pythonBin, script=${scriptFile.absolutePath}, " +
+                "cookies=${cookieNames(cookies)} (${cookies.length} chars)"
+        )
         val startTime = System.currentTimeMillis()
 
         val process = ProcessBuilder(command)
@@ -61,21 +65,29 @@ class FilmowDataSourceImpl : FilmowDataSource {
         val exited = process.waitFor(TIMEOUT_MINUTES, TimeUnit.MINUTES)
         stderrThread.join(5000)
         if (!exited) {
+            log.error("[SCRAPE] Timed out after $TIMEOUT_MINUTES min for @$username")
             process.destroyForcibly()
             throw RuntimeException("Filmow scraper timed out after $TIMEOUT_MINUTES minutes")
         }
 
+        log.info("[SCRAPE] Scraper exited with ${process.exitValue()} in ${(System.currentTimeMillis() - startTime) / 1000}s")
         if (process.exitValue() != 0) {
+            log.error("[SCRAPE] Scraper failed for @$username: ${stdout.take(1000)}")
             throw RuntimeException("Filmow scraper failed: $stdout")
         }
 
+        if (stdout.isBlank()) {
+            log.error("[SCRAPE] Scraper exited 0 with empty stdout for @$username")
+        }
         val profile = parseResult(stdout)
         val totalMs = System.currentTimeMillis() - startTime
         log.info("[SCRAPE] Done in ${totalMs / 1000}s — " +
             "watched=${profile.watched.size}, " +
             "watchlist=${profile.watchlist.size}, " +
             "favorites=${profile.favorites.size}, " +
-            "lists=${profile.lists.size}")
+            "lists=${profile.lists.size}, " +
+            "errors=${profile.errors.size}")
+        profile.errors.take(10).forEach { log.warn("[SCRAPE] Scraper error: $it") }
         return profile
     }
 
@@ -196,6 +208,10 @@ class FilmowDataSourceImpl : FilmowDataSource {
         }
         return Pair(lists, allPartials)
     }
+
+    /** Only the cookie names: the values are the user's Filmow session and must never be logged. */
+    private fun cookieNames(cookies: String): List<String> =
+        cookies.split(";").mapNotNull { pair -> pair.substringBefore("=").trim().takeIf { it.isNotEmpty() } }
 
     private fun resolveVenvPython(): String {
         val isWindows = System.getProperty("os.name").lowercase().contains("win")

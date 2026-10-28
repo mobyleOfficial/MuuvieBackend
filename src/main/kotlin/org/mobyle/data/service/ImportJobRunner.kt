@@ -43,8 +43,16 @@ class ImportJobRunner(
         run(job, READ_FAILED) {
             if (!repository.transition(job.id, setOf(ImportStatus.PENDING), ImportStatus.READING)) return@run
             notify(job.id)
+            log.info(
+                "[IMPORT] Job ${job.id} reading ${job.source.wireValue} @${job.inputRef} " +
+                    "(credentials: ${if (credentials.isBlank()) "none" else "${credentials.length} chars"})"
+            )
             val reader = readers.first { it.source == job.source }
             val bundle = reader.read(job.inputRef, credentials)
+            log.info(
+                "[IMPORT] Job ${job.id} read: watched=${bundle.watched.size}, watchlist=${bundle.watchlist.size}, " +
+                    "favorites=${bundle.favorites.size}, lists=${bundle.lists.size}"
+            )
             // False when the user cancelled while the source was being read: the bundle is dropped.
             if (!repository.saveRead(job.id, bundle)) return@run
             notify(job.id)
@@ -121,7 +129,7 @@ class ImportJobRunner(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    log.error("[IMPORT] Job ${job.id} failed", e)
+                    log.error("[IMPORT] Job ${job.id} failed (${job.source.wireValue} @${job.inputRef}): ${e.message}", e)
                     repository.transition(job.id, ImportStatus.ACTIVE, ImportStatus.FAILED, failure)
                     notify(job.id)
                 }

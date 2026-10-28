@@ -34,7 +34,25 @@ def create_session(cookies_str=""):
         log(f"[SESSION] Cookies set: {[k for k in session.cookies.keys()]}")
     else:
         log("[SESSION] No cookies provided — scraping as anonymous user")
+    log(f"[SESSION] User-Agent: {session.headers.get('User-Agent')}")
+    log(f"[SESSION] cloudscraper {getattr(cloudscraper, '__version__', '?')}, Python {sys.version.split()[0]}")
     return session
+
+
+def log_blocked_response(session, response):
+    """Logs why a request was refused (e.g. a Cloudflare challenge). Cookie values are never logged."""
+    headers = response.headers
+    title_match = re.search(r"<title>(.*?)</title>", response.text, re.IGNORECASE | re.DOTALL)
+    title = title_match.group(1).strip() if title_match else None
+    log(f"[HTTP][BLOCKED] {response.status_code} {response.reason} for {response.url}")
+    log(f"[HTTP][BLOCKED]   server={headers.get('server')} cf-mitigated={headers.get('cf-mitigated')} "
+        f"cf-ray={headers.get('cf-ray')} content-type={headers.get('content-type')}")
+    log(f"[HTTP][BLOCKED]   page title={title!r}")
+    log(f"[HTTP][BLOCKED]   request User-Agent={response.request.headers.get('User-Agent')}")
+    log(f"[HTTP][BLOCKED]   cookies sent={[c.name for c in session.cookies]}")
+    log(f"[HTTP][BLOCKED]   cookies set by response={list(response.cookies.keys())}")
+    if headers.get("cf-mitigated") == "challenge" or (title and "just a moment" in title.lower()):
+        log("[HTTP][BLOCKED]   -> Cloudflare challenge: the request was refused before reaching Filmow")
 
 
 def check_authenticated(soup):
@@ -67,8 +85,11 @@ def get_page(session, url):
             log(f"[HTTP] Rate limited, waiting {wait:.0f}s...")
             time.sleep(wait)
             continue
+        if last_response.status_code >= 400:
+            log_blocked_response(session, last_response)
         last_response.raise_for_status()
         return BeautifulSoup(last_response.text, "html.parser")
+    log_blocked_response(session, last_response)
     last_response.raise_for_status()
 
 
@@ -140,7 +161,7 @@ def scrape_profile_page(session, username):
             log(f"Recently watched: {len(recent)} items")
 
     except Exception as e:
-        log(f"Failed to scrape profile page for @{username}: {e}")
+        log(f"[ERROR] Failed to scrape profile page for @{username}: {type(e).__name__}: {e}")
 
     return display_name, stats, recent
 
@@ -732,6 +753,10 @@ def scrape_profile(username, cookies_str=""):
     log(f"[PHASE] list movies detail data done in {time.time() - t:.1f}s")
 
     log(f"[PHASE] Total scrape time: {time.time() - t_start:.1f}s")
+    log(f"[SUMMARY] watched={len(watched)} watchlist={len(watchlist)} favorites={len(favorites)} "
+        f"lists={len(user_lists)} recentlyWatched={len(recently_watched)} errors={len(errors)}")
+    for error in errors[:10]:
+        log(f"[SUMMARY]   error: {error}")
 
     return {
         "username": username,
@@ -767,6 +792,7 @@ def main():
         result = scrape_profile(username, cookies)
         print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
+        log(f"[FATAL] {type(e).__name__}: {e}")
         print(json.dumps({"error": str(e), "username": username}))
         sys.exit(1)
 
