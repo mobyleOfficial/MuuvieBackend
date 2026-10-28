@@ -9,15 +9,30 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.andWhere
+import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.insertIgnore
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
+import org.mobyle.data.local.database.ArticleMoviesTable
 import org.mobyle.data.local.database.ArticlesTable
+import org.mobyle.data.local.database.MoviesTable
+import org.mobyle.data.local.database.UserMoviesTable
+import org.mobyle.data.local.database.userDbIdOf
 import org.mobyle.domain.model.Article
-import org.mobyle.domain.model.ArticleListing
+import org.mobyle.domain.model.ArticleMovie
+import org.mobyle.domain.model.ArticleMovieState
+import org.mobyle.domain.model.Page
+import org.mobyle.domain.model.PageRequest
+import org.mobyle.domain.model.vocabulary.WatchStatus
 import org.slf4j.LoggerFactory
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -52,28 +67,6 @@ class ArticlesDataSourceImpl : ArticlesDataSource {
         scrapeOmelete()
     }
 
-    override suspend fun getArticles(page: Int, pageSize: Int): ArticleListing {
-        return transaction {
-            val totalResults = ArticlesTable.selectAll().count().toInt()
-            val totalPages = if (totalResults == 0) 0 else ceil(totalResults.toDouble() / pageSize).toInt()
-            val offset = ((page - 1) * pageSize).toLong()
-
-            val articles = ArticlesTable
-                .selectAll()
-                .orderBy(ArticlesTable.publishedAt, SortOrder.DESC)
-                .limit(pageSize)
-                .offset(offset)
-                .map { row -> row.toArticle() }
-
-            ArticleListing(
-                totalPages = totalPages,
-                totalResults = totalResults,
-                page = page,
-                articles = articles
-            )
-        }
-    }
-
     override suspend fun getArticleById(articleId: Long): Article? {
         return transaction {
             ArticlesTable
@@ -81,6 +74,75 @@ class ArticlesDataSourceImpl : ArticlesDataSource {
                 .where { ArticlesTable.id eq articleId }
                 .firstOrNull()
                 ?.toArticle()
+        }
+    }
+
+    override fun getArticlesPage(source: String?, page: PageRequest): Page<Article> = transaction {
+        val query = ArticlesTable.selectAll()
+        if (source != null) query.andWhere { ArticlesTable.sourceName eq source }
+        val total = query.count().toInt()
+        val articles = query
+            .orderBy(ArticlesTable.publishedAt to SortOrder.DESC, ArticlesTable.id to SortOrder.DESC)
+            .limit(page.limit, offset = page.offset)
+            .map { row -> row.toArticle() }
+        Page.of(articles, page, total)
+    }
+
+    override fun getSources(): List<String> = transaction {
+        ArticlesTable.select(ArticlesTable.sourceName)
+            .withDistinct()
+            .orderBy(ArticlesTable.sourceName to SortOrder.ASC)
+            .map { it[ArticlesTable.sourceName] }
+    }
+
+    override fun articleMovies(articleIds: List<Long>): Map<Long, List<ArticleMovie>> = transaction {
+        if (articleIds.isEmpty()) return@transaction emptyMap()
+        (ArticleMoviesTable innerJoin MoviesTable).selectAll()
+            .where { ArticleMoviesTable.articleId inList articleIds }
+            .orderBy(ArticleMoviesTable.confidence to SortOrder.DESC, MoviesTable.id to SortOrder.ASC)
+            .groupBy({ it[ArticleMoviesTable.articleId].value }) { row ->
+                ArticleMovie(
+                    movieId = row[MoviesTable.id].value,
+                    tmdbId = row[MoviesTable.tmdbId],
+                    title = row[MoviesTable.localTitle] ?: row[MoviesTable.title],
+                    posterPath = row[MoviesTable.posterPath],
+                    year = row[MoviesTable.year]
+                )
+            }
+    }
+
+    override fun movieStates(userId: String, movieIds: List<Long>): Map<Long, ArticleMovieState> = transaction {
+        val userDbId = userDbIdOf(userId)
+        val statuses = if (userDbId == null || movieIds.isEmpty()) emptyMap() else UserMoviesTable.selectAll()
+            .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId inList movieIds) }
+            .associate { it[UserMoviesTable.movieId].value to it[UserMoviesTable.status] }
+        movieIds.associateWith { movieId ->
+            ArticleMovieState(
+                inQueroVer = statuses[movieId] == WatchStatus.WANT_TO_WATCH.wireValue,
+                watched = statuses[movieId] == WatchStatus.WATCHED.wireValue
+            )
+        }
+    }
+
+    override fun articlesToLink(limit: Int): List<Article> = transaction {
+        ArticlesTable.selectAll()
+            .where { ArticlesTable.moviesLinkedAt.isNull() }
+            .orderBy(ArticlesTable.publishedAt to SortOrder.DESC)
+            .limit(limit)
+            .map { row -> row.toArticle() }
+    }
+
+    override fun saveMovieLinks(articleId: Long, links: Map<Long, Float>) {
+        transaction {
+            ArticleMoviesTable.deleteWhere { ArticleMoviesTable.articleId eq articleId }
+            links.forEach { (movieId, confidence) ->
+                ArticleMoviesTable.insert {
+                    it[ArticleMoviesTable.articleId] = articleId
+                    it[ArticleMoviesTable.movieId] = movieId
+                    it[ArticleMoviesTable.confidence] = confidence
+                }
+            }
+            ArticlesTable.update({ ArticlesTable.id eq articleId }) { it[moviesLinkedAt] = Clock.System.now() }
         }
     }
 

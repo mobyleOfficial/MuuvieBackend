@@ -12,6 +12,7 @@ data class TmdbMovieResponse(
     @SerialName("poster_path") val posterPath: String? = null,
     @SerialName("backdrop_path") val backdropPath: String? = null,
     @SerialName("vote_average") val voteAverage: Double? = null,
+    @SerialName("vote_count") val voteCount: Int? = null,
     @SerialName("release_date") val releaseDate: String? = null
 )
 
@@ -37,10 +38,24 @@ data class TmdbMovieDetailResponse(
     val runtime: Int? = null,
     val genres: List<TmdbGenre> = emptyList(),
     val credits: TmdbCredits? = null,
+    val videos: TmdbVideosResponse? = null,
     @SerialName("watch/providers") val watchProviders: TmdbWatchProvidersWrapper? = null,
     val similar: TmdbMovieListResponse? = null,
-    val reviews: TmdbReviewListResponse? = null
+    val reviews: TmdbReviewListResponse? = null,
+    // Read by the maratona challenges (B7).
+    @SerialName("original_language") val originalLanguage: String? = null,
+    @SerialName("production_countries") val productionCountries: List<TmdbProductionCountry> = emptyList(),
+    val keywords: TmdbKeywords? = null
 )
+
+@Serializable
+data class TmdbProductionCountry(@SerialName("iso_3166_1") val iso: String? = null)
+
+@Serializable
+data class TmdbKeywords(val keywords: List<TmdbKeyword> = emptyList())
+
+@Serializable
+data class TmdbKeyword(val id: Int, val name: String? = null)
 
 @Serializable
 data class TmdbCredits(
@@ -82,6 +97,19 @@ data class TmdbWatchProviderEntry(
 )
 
 @Serializable
+data class TmdbVideosResponse(
+    val results: List<TmdbVideo> = emptyList()
+)
+
+@Serializable
+data class TmdbVideo(
+    val key: String? = null,
+    val site: String? = null,
+    val type: String? = null,
+    val official: Boolean = false
+)
+
+@Serializable
 data class TmdbReviewListResponse(
     val page: Int = 1,
     @SerialName("total_pages") val totalPages: Int = 1,
@@ -117,13 +145,17 @@ data class TmdbGenreListResponse(
 @Serializable
 data class TmdbCountry(
     @SerialName("iso_3166_1") val iso: String,
-    @SerialName("english_name") val englishName: String? = null
+    @SerialName("english_name") val englishName: String? = null,
+    // In the language of the request (pt-BR, set on the client).
+    @SerialName("native_name") val nativeName: String? = null
 )
 
 @Serializable
 data class TmdbLanguage(
     @SerialName("iso_639_1") val iso: String,
-    @SerialName("english_name") val englishName: String? = null
+    @SerialName("english_name") val englishName: String? = null,
+    // The language's own name (endonym); TMDB does not translate languages.
+    val name: String? = null
 )
 
 @Serializable

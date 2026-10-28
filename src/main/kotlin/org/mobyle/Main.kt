@@ -14,26 +14,37 @@ import io.ktor.server.websocket.*
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import org.mobyle.data.local.database.DatabaseConfig
+import org.mobyle.domain.model.ApiError
+import org.mobyle.domain.model.ConflictException
+import org.mobyle.domain.model.DomainException
+import org.mobyle.domain.model.ForbiddenException
+import org.mobyle.domain.model.NotFoundException
+import org.mobyle.domain.model.TooManyRequestsException
+import org.mobyle.domain.model.UnavailableException
+import org.mobyle.domain.model.ValidationException
 import org.mobyle.data.local.database.GenresTable
 import org.mobyle.data.local.auth.TokenBlocklistDataSource
 import org.mobyle.data.remote.articles.ArticlesDataSource
+import org.mobyle.data.service.ArticleMovieLinker
 import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.service.MovieEnrichmentService
+import org.mobyle.domain.repository.ImportRepository
+import org.mobyle.domain.usecase.maratonas.AdvanceMaratonas
+import org.mobyle.domain.usecase.cineclubes.AdvanceCineClubes
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.koin.ktor.ext.inject
 import org.mobyle.data.di.dataModule
 import org.mobyle.di.appModule
-import org.mobyle.routing.getActivitiesRouting
-import org.mobyle.routing.getArticlesRouting
-import org.mobyle.routing.getAuthRouting
-import org.mobyle.routing.getCommentsRouting
-import org.mobyle.routing.getFilmowRouting
-import org.mobyle.routing.getMoviesRouting
-import org.mobyle.routing.getProfileRouting
-import org.mobyle.routing.getWebSocketRouting
+import org.mobyle.routing.API_V1_PREFIX
+import org.mobyle.routing.apiRoutes
+import org.mobyle.routing.configureObservability
+import org.mobyle.routing.getHealthRouting
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
 import org.slf4j.LoggerFactory
@@ -47,6 +58,7 @@ fun main() {
 
     embeddedServer(Netty, port = port, host = "0.0.0.0") {
         configureCors()
+        configureObservability()
         configureStatusPages()
         configureKoin()
         configureWebSockets()
@@ -55,6 +67,9 @@ fun main() {
         scheduleTokenBlocklistCleanup()
         seedGenres()
         startMovieEnrichment()
+        scheduleMaratonas()
+        scheduleCineClubes()
+        failInterruptedImports()
     }.start(wait = true)
 }
 
@@ -97,15 +112,27 @@ private fun logTmdbEnv() {
     }
 }
 
-private fun Application.configureStatusPages() {
+/** Maps errors to the envelope of the v1 contract. Unexpected errors are logged, never echoed. */
+fun Application.configureStatusPages() {
     install(StatusPages) {
+        exception<DomainException> { call, cause ->
+            val status = when (cause) {
+                is NotFoundException -> HttpStatusCode.NotFound
+                is ForbiddenException -> HttpStatusCode.Forbidden
+                is ValidationException -> HttpStatusCode.BadRequest
+                is ConflictException -> HttpStatusCode.Conflict
+                is UnavailableException -> HttpStatusCode.ServiceUnavailable
+                is TooManyRequestsException -> HttpStatusCode.TooManyRequests
+            }
+            val details = (cause as? ValidationException)?.let { mapOf("field" to it.field) }
+            call.respond(status, ApiError(cause.code, cause.message.orEmpty(), details))
+        }
+        exception<BadRequestException> { call, _ ->
+            call.respond(HttpStatusCode.BadRequest, ApiError("validation_failed", "Malformed request body"))
+        }
         exception<Throwable> { call, cause ->
-            call.respond(
-                HttpStatusCode.InternalServerError, mapOf(
-                    "error" to "Internal Server Error",
-                    "message" to (cause.message ?: "Unknown error")
-                )
-            )
+            call.application.log.error("Unhandled error on ${call.request.httpMethod.value} ${call.request.path()}", cause)
+            call.respond(HttpStatusCode.InternalServerError, ApiError("internal_error", "Unexpected error"))
         }
     }
 }
@@ -119,6 +146,7 @@ fun Application.configureKoin() {
 
 private fun Application.scheduleArticleScraping() {
     val articlesDataSource by inject<ArticlesDataSource>()
+    val articleMovieLinker by inject<ArticleMovieLinker>()
     val intervalMs = System.getenv("SCRAPE_INTERVAL_HOURS")?.toLongOrNull()?.times(3_600_000) ?: 10_800_000L // default 3h
 
     CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
@@ -130,7 +158,52 @@ private fun Application.scheduleArticleScraping() {
             } catch (e: Exception) {
                 log.error("Article scraping failed", e)
             }
+            // Also picks up articles a previous run could not link (e.g. TMDB was down).
+            try {
+                articleMovieLinker.linkPending()
+            } catch (e: Exception) {
+                log.error("Linking article movies failed", e)
+            }
             delay(intervalMs)
+        }
+    }
+}
+
+/** Starts and finishes maratonas along their period (B7), on boot and then every hour. */
+private fun Application.scheduleMaratonas() {
+    val advanceMaratonas by inject<AdvanceMaratonas>()
+
+    CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        while (isActive) {
+            try {
+                val (started, finished) = advanceMaratonas()
+                if (started + finished > 0) log.info("[MARATONA] $started started, $finished finished")
+            } catch (e: Exception) {
+                log.error("[MARATONA] Scheduler failed", e)
+            }
+            delay(60 * 60 * 1000L)
+        }
+    }
+}
+
+/** Starts, advances and finishes CineClubes and sends the debate pushes (B8), on boot and then every hour. */
+private fun Application.scheduleCineClubes() {
+    val advanceCineClubes by inject<AdvanceCineClubes>()
+
+    CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        while (isActive) {
+            try {
+                val run = advanceCineClubes()
+                if (run.started + run.finished + run.sessionsOpened + run.debatesNotified > 0) {
+                    log.info(
+                        "[CINECLUBE] ${run.started} started, ${run.finished} finished, " +
+                            "${run.sessionsOpened} sessions opened, ${run.debatesNotified} debates notified"
+                    )
+                }
+            } catch (e: Exception) {
+                log.error("[CINECLUBE] Scheduler failed", e)
+            }
+            delay(60 * 60 * 1000L)
         }
     }
 }
@@ -181,6 +254,13 @@ private fun Application.startMovieEnrichment() {
     enrichmentService.startBackgroundLoop(intervalMinutes = 5)
 }
 
+/** Jobs a restart cut while reading or importing are failed, so the user can start again. */
+private fun Application.failInterruptedImports() {
+    val importRepository by inject<ImportRepository>()
+    val failed = importRepository.failInterrupted()
+    if (failed > 0) log.warn("Failed $failed import job(s) interrupted by the restart")
+}
+
 fun Application.configureRouting() {
     install(ContentNegotiation) {
         json(Json {
@@ -192,30 +272,7 @@ fun Application.configureRouting() {
     }
 
     routing {
-        getAuthRouting()
-        getMoviesRouting()
-        getProfileRouting()
-        getActivitiesRouting()
-        getCommentsRouting()
-        getArticlesRouting()
-        getFilmowRouting()
-        getWebSocketRouting()
-
-        // TODO: remove — temporary endpoint to reset movie data
-        post("/admin/reset-db") {
-            transaction {
-                exec("DELETE FROM movie_similars")
-                exec("DELETE FROM movie_watch_providers")
-                exec("DELETE FROM movie_cast")
-                exec("DELETE FROM movie_genres")
-                exec("DELETE FROM user_list_items")
-                exec("DELETE FROM user_lists")
-                exec("DELETE FROM user_movies")
-                exec("DELETE FROM movies")
-                exec("DELETE FROM people")
-            }
-            log.info("[ADMIN] Database movie data reset")
-            call.respond(io.ktor.http.HttpStatusCode.OK, mapOf("status" to "reset complete"))
-        }
+        getHealthRouting()
+        route(API_V1_PREFIX) { apiRoutes() }
     }
 }

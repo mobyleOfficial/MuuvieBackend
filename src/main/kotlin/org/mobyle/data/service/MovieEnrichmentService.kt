@@ -77,6 +77,12 @@ class MovieEnrichmentService(
         val detailResponse = tmdbDataSource.getMovieDetail(tmdbId)
         val detail = detailResponse.toDomain()
         catalogDataSource.enrichMovie(tmdbId, detail, detailResponse.credits)
+        catalogDataSource.saveMovieFacts(
+            tmdbId,
+            detailResponse.originalLanguage,
+            detailResponse.productionCountries.mapNotNull { it.iso },
+            detailResponse.keywords?.keywords.orEmpty().map { it.id to (it.name ?: "") }
+        )
         catalogDataSource.saveSimilarMovies(tmdbId, detail.similarMovies)
         catalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
     }
