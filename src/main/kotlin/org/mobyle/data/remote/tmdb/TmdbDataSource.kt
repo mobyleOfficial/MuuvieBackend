@@ -6,6 +6,8 @@ interface TmdbDataSource {
     suspend fun getTrendingMovies(page: Int): TmdbMovieListResponse
     suspend fun getMovieDetail(movieId: Int): TmdbMovieDetailResponse
     suspend fun findByImdbId(imdbId: String): TmdbFindResponse
+    /** English title, alternative titles and credits of a movie, used to confirm a match. */
+    suspend fun getMovieFacts(movieId: Int): TmdbMovieFactsResponse
     suspend fun searchMovies(query: String, page: Int, year: Int? = null, language: String? = null): TmdbMovieListResponse
     suspend fun discoverMovies(
         page: Int,

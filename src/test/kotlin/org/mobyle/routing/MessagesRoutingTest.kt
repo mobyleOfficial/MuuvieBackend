@@ -171,6 +171,10 @@ class MessagesRoutingTest {
         val wsClient = createClient { install(ClientWebSockets) }
         val nonce = wsTokens.generateToken("bia")
         val session = wsClient.webSocketSession("/ws?token=$nonce")
+        // Warm-up: the first request of a cold JVM (CI runner) pays for class loading and JIT,
+        // which is not delivery latency. Each message reaches the recipient as two frames.
+        send("ana-token", "bia", "Oi")
+        repeat(2) { withTimeout(10_000) { session.incoming.receive() } }
 
         val started = System.currentTimeMillis()
         val response = send("ana-token", "bia", "Viu Suspiria?")

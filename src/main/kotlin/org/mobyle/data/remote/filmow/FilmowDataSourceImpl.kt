@@ -27,9 +27,10 @@ class FilmowDataSourceImpl : FilmowDataSource {
         private const val VENV_PYTHON_WIN = "scripts/.venv/Scripts/python.exe"
         private const val VENV_PYTHON_UNIX = "scripts/.venv/bin/python"
         private const val TIMEOUT_MINUTES = 20L
+        private const val KNOWN_IDS_ENV = "FILMOW_KNOWN_IDS_FILE"
     }
 
-    override suspend fun scrapeProfile(cookies: String, username: String): FilmowProfile {
+    override suspend fun scrapeProfile(cookies: String, username: String, knownFilmowIds: Set<String>): FilmowProfile {
         val scriptFile = resolveScriptPath()
         if (!scriptFile.exists()) {
             throw IllegalStateException("Python scraper not found at: ${scriptFile.absolutePath}")
@@ -42,11 +43,30 @@ class FilmowDataSourceImpl : FilmowDataSource {
             command.add(cookies)
         }
 
+        log.info(
+            "[SCRAPE] Starting for @$username — python=$pythonBin, script=${scriptFile.absolutePath}, " +
+                "cookies=${cookieNames(cookies)} (${cookies.length} chars)"
+        )
+        // Passed as a file: thousands of ids do not fit in a command line.
+        val knownIdsFile = knownFilmowIds.takeIf { it.isNotEmpty() }?.let { ids ->
+            File.createTempFile("filmow-known-ids", ".txt").apply {
+                deleteOnExit()
+                writeText(ids.joinToString("\n"))
+            }
+        }
+        log.info("[SCRAPE] Known Filmow ids passed to the scraper: ${knownFilmowIds.size}")
+
         val startTime = System.currentTimeMillis()
 
-        val process = ProcessBuilder(command)
-            .redirectErrorStream(false)
-            .start()
+        val process = try {
+            ProcessBuilder(command)
+                .redirectErrorStream(false)
+                .apply { knownIdsFile?.let { environment()[KNOWN_IDS_ENV] = it.absolutePath } }
+                .start()
+        } catch (e: Exception) {
+            knownIdsFile?.delete()
+            throw e
+        }
 
         val stderrThread = thread(isDaemon = true, name = "scraper-stderr") {
             process.errorStream.bufferedReader().useLines { lines ->
@@ -60,22 +80,31 @@ class FilmowDataSourceImpl : FilmowDataSource {
 
         val exited = process.waitFor(TIMEOUT_MINUTES, TimeUnit.MINUTES)
         stderrThread.join(5000)
+        knownIdsFile?.delete()
         if (!exited) {
+            log.error("[SCRAPE] Timed out after $TIMEOUT_MINUTES min for @$username")
             process.destroyForcibly()
             throw RuntimeException("Filmow scraper timed out after $TIMEOUT_MINUTES minutes")
         }
 
+        log.info("[SCRAPE] Scraper exited with ${process.exitValue()} in ${(System.currentTimeMillis() - startTime) / 1000}s")
         if (process.exitValue() != 0) {
+            log.error("[SCRAPE] Scraper failed for @$username: ${stdout.take(1000)}")
             throw RuntimeException("Filmow scraper failed: $stdout")
         }
 
+        if (stdout.isBlank()) {
+            log.error("[SCRAPE] Scraper exited 0 with empty stdout for @$username")
+        }
         val profile = parseResult(stdout)
         val totalMs = System.currentTimeMillis() - startTime
         log.info("[SCRAPE] Done in ${totalMs / 1000}s — " +
             "watched=${profile.watched.size}, " +
             "watchlist=${profile.watchlist.size}, " +
             "favorites=${profile.favorites.size}, " +
-            "lists=${profile.lists.size}")
+            "lists=${profile.lists.size}, " +
+            "errors=${profile.errors.size}")
+        profile.errors.take(10).forEach { log.warn("[SCRAPE] Scraper error: $it") }
         return profile
     }
 
@@ -196,6 +225,10 @@ class FilmowDataSourceImpl : FilmowDataSource {
         }
         return Pair(lists, allPartials)
     }
+
+    /** Only the cookie names: the values are the user's Filmow session and must never be logged. */
+    private fun cookieNames(cookies: String): List<String> =
+        cookies.split(";").mapNotNull { pair -> pair.substringBefore("=").trim().takeIf { it.isNotEmpty() } }
 
     private fun resolveVenvPython(): String {
         val isWindows = System.getProperty("os.name").lowercase().contains("win")

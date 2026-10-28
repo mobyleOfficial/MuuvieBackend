@@ -5,6 +5,7 @@ import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieDetail
 import org.mobyle.domain.model.WatchProvider
 import org.mobyle.data.remote.tmdb.model.TmdbCredits
+import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 
 interface MovieCatalogDataSource {
     fun findById(id: Long): Movie?
@@ -21,7 +22,18 @@ interface MovieCatalogDataSource {
     fun getSimilarMovies(tmdbId: Int): CachedData<List<Movie>>
     fun getWatchProviders(tmdbId: Int): CachedData<List<WatchProvider>>
     fun resolveScrapedMovie(oldDbId: Long, realTmdbId: Int, filmowId: String?)
+    /** The enrichment queue: pending or stale movies, skipping unmatched ones and those in backoff. */
     fun getMoviesNeedingEnrichment(limit: Int = 50): List<EnrichmentCandidate>
+    fun getEnrichmentCandidates(dbIds: Collection<Long>): List<EnrichmentCandidate>
+    /** The movie with [tmdbId] is linked to TMDB through [method]; its backoff is cleared. */
+    fun markMatched(tmdbId: Int, method: MovieMatchMethod)
+    /** No TMDB movie matched with confidence: the movie leaves the queue. */
+    fun markUnmatched(dbId: Long)
+    /** A TMDB error: the movie is retried later, waiting longer after each failure. */
+    fun markEnrichmentFailed(dbId: Long)
+    /** Filmow ids the catalog can resolve without the Filmow detail page (TMDB id or IMDb link). */
+    fun getResolvableFilmowIds(): Set<String>
+    fun findDbIdsByFilmowIds(filmowIds: Collection<String>): List<Long>
     fun getLocalMovieDetail(tmdbId: Int): MovieDetail?
     fun getLocalMovieDetailByDbId(dbId: Long): MovieDetail?
     fun findByTitle(title: String): Movie?
@@ -44,5 +56,8 @@ data class EnrichmentCandidate(
     val year: Int?,
     val filmowId: String?,
     val imdbUrl: String?,
-    val needsResolution: Boolean
+    val director: String?,
+    val needsResolution: Boolean,
+    val needsEnrichment: Boolean = true,
+    val unmatched: Boolean = false
 )

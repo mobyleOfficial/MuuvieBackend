@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
+import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 import org.mobyle.domain.model.vocabulary.Visibility
 
 /** A movie as the source knows it. [externalId] is the id on the source (e.g. the Filmow id). */
@@ -14,6 +15,8 @@ data class ImportedMovie(
     val externalId: String,
     val title: String,
     val originalTitle: String? = null,
+    // The title in Portuguese, as the source shows it.
+    val localTitle: String? = null,
     val year: Int? = null,
     val posterUrl: String? = null,
     val overview: String? = null,
@@ -26,7 +29,9 @@ data class ImportedMovie(
     val stars: Double? = null,
     val watchedOn: LocalDate? = null,
     // Set by the matcher before writing, when TMDB matched with confidence.
-    val tmdbId: Int? = null
+    val tmdbId: Int? = null,
+    // MovieMatchMethod wire value of that match.
+    val matchMethod: String? = null
 )
 
 @Serializable
@@ -130,6 +135,21 @@ data class MovieCandidate(
     val posterPath: String? = null,
     val score: Double
 )
+
+/** What TMDB says about a candidate, fetched only when the title and the year are not enough. */
+data class MovieCandidateFacts(
+    // Localized, English, original and alternative titles.
+    val titles: List<String>,
+    val year: Int?,
+    val directors: List<String>
+)
+
+/** Where the resolution of a movie without TMDB id ended (filmow-movie-enrichment). */
+sealed interface MovieResolution {
+    data class Matched(val tmdbId: Int, val method: MovieMatchMethod) : MovieResolution
+    /** No candidate matched with confidence; [candidates] go to the confirmation queue. */
+    data class Unmatched(val candidates: List<MovieCandidate>) : MovieResolution
+}
 
 /** F3.4: an imported movie waiting for the user to confirm its TMDB match. */
 @Serializable

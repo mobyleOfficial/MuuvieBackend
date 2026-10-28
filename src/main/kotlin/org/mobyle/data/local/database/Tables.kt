@@ -60,6 +60,11 @@ object MoviesTable : LongIdTable("movies") {
     val trailerKey = varchar("trailer_key", 20).nullable()
     val filmowGenres = text("filmow_genres").nullable() // comma-separated genre names from Filmow
     val originalLanguage = varchar("original_language", 10).nullable() // ISO 639-1, from TMDB (B7)
+    // TMDB link state of scraped movies (V19, filmow-movie-enrichment).
+    val matchStatus = varchar("match_status", 20).default("pending")
+    val matchMethod = varchar("match_method", 20).nullable()
+    val enrichmentAttempts = integer("enrichment_attempts").default(0)
+    val enrichmentRetryAt = timestamp("enrichment_retry_at").nullable()
 }
 
 /** Production countries of a movie (ISO 3166-1), read by the maratona challenges (B7). */

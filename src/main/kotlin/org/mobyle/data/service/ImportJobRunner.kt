@@ -13,13 +13,14 @@ import org.mobyle.domain.model.ImportJob
 import org.mobyle.domain.model.ImportOptions
 import org.mobyle.domain.model.ImportedMovie
 import org.mobyle.domain.model.MovieCandidate
+import org.mobyle.domain.model.MovieResolution
+import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
-import org.mobyle.domain.policy.MovieMatchPolicy
 import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
 import org.mobyle.domain.repository.ImportSourceReader
-import org.mobyle.domain.repository.MovieCandidateSearch
+import org.mobyle.domain.repository.MovieResolver
 import org.mobyle.domain.usecase.feed.ActivityPublisher
 import org.slf4j.LoggerFactory
 
@@ -31,7 +32,8 @@ import org.slf4j.LoggerFactory
 class ImportJobRunner(
     private val repository: ImportRepository,
     private val readers: List<ImportSourceReader>,
-    private val candidateSearch: MovieCandidateSearch,
+    private val resolver: MovieResolver,
+    private val enrichment: MovieEnrichmentService,
     private val webSocketManager: WebSocketManager,
     private val activities: ActivityPublisher
 ) : ImportJobQueue {
@@ -43,8 +45,16 @@ class ImportJobRunner(
         run(job, READ_FAILED) {
             if (!repository.transition(job.id, setOf(ImportStatus.PENDING), ImportStatus.READING)) return@run
             notify(job.id)
+            log.info(
+                "[IMPORT] Job ${job.id} reading ${job.source.wireValue} @${job.inputRef} " +
+                    "(credentials: ${if (credentials.isBlank()) "none" else "${credentials.length} chars"})"
+            )
             val reader = readers.first { it.source == job.source }
             val bundle = reader.read(job.inputRef, credentials)
+            log.info(
+                "[IMPORT] Job ${job.id} read: watched=${bundle.watched.size}, watchlist=${bundle.watchlist.size}, " +
+                    "favorites=${bundle.favorites.size}, lists=${bundle.lists.size}"
+            )
             // False when the user cancelled while the source was being read: the bundle is dropped.
             if (!repository.saveRead(job.id, bundle)) return@run
             notify(job.id)
@@ -69,25 +79,28 @@ class ImportJobRunner(
         }
         repository.finish(job.id, counts)
         notify(job.id)
+        // The imported movies are enriched now instead of waiting for the background loop.
+        enrichment.enrichImported(job.source, chosen.distinctMovies.map { it.externalId })
         activities.moviesImported(job.userId, job.id, job.source, counts.watched, counts.watchlist)
         log.info("[IMPORT] Job ${job.id} done: $counts")
     }
 
     /**
      * Movies with an IMDb link, or already known to the catalog, are matched later by the
-     * enrichment. The others are searched on TMDB: a confident match is used, the rest is queued.
+     * enrichment. The others go through the resolver (title and year, then director): a
+     * confident match is used, the rest is queued for the user.
      */
     private suspend fun match(
         source: ImportSource,
         movies: List<ImportedMovie>
-    ): Pair<Map<String, Int>, Map<String, List<MovieCandidate>>> {
-        val matched = mutableMapOf<String, Int>()
+    ): Pair<Map<String, MovieResolution.Matched>, Map<String, List<MovieCandidate>>> {
+        val matched = mutableMapOf<String, MovieResolution.Matched>()
         val unmatched = mutableMapOf<String, List<MovieCandidate>>()
         for (movie in movies) {
             if (movie.tmdbId != null || movie.imdbUrl != null) continue
             if (repository.knownTmdbId(source, movie.externalId) != null) continue
-            val candidates = try {
-                candidateSearch.candidates(movie)
+            val resolution = try {
+                resolver.resolve(movie)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -95,16 +108,24 @@ class ImportJobRunner(
                 log.warn("[IMPORT] TMDB search failed for '${movie.title}': ${e.message}")
                 continue
             }
-            val automatic = MovieMatchPolicy.automaticMatch(movie, candidates)
-            if (automatic != null) matched[movie.externalId] = automatic.tmdbId else unmatched[movie.externalId] = candidates
+            when (resolution) {
+                is MovieResolution.Matched -> matched[movie.externalId] = resolution
+                is MovieResolution.Unmatched -> unmatched[movie.externalId] = resolution.candidates
+            }
             delay(SEARCH_INTERVAL_MS)
         }
+        log.info(
+            "[IMPORT] Matching: ${matched.size} matched (" +
+                MovieMatchMethod.entries.joinToString { m -> "${m.wireValue}=${matched.values.count { it.method == m }}" } +
+                "), ${unmatched.size} to confirm"
+        )
         return matched to unmatched
     }
 
-    private fun withTmdbIds(bundle: ImportBundle, matched: Map<String, Int>): ImportBundle {
+    private fun withTmdbIds(bundle: ImportBundle, matched: Map<String, MovieResolution.Matched>): ImportBundle {
         if (matched.isEmpty()) return bundle
-        fun ImportedMovie.resolved() = matched[externalId]?.let { copy(tmdbId = it) } ?: this
+        fun ImportedMovie.resolved() =
+            matched[externalId]?.let { copy(tmdbId = it.tmdbId, matchMethod = it.method.wireValue) } ?: this
         return bundle.copy(
             watched = bundle.watched.map { it.resolved() },
             watchlist = bundle.watchlist.map { it.resolved() },
@@ -121,7 +142,7 @@ class ImportJobRunner(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    log.error("[IMPORT] Job ${job.id} failed", e)
+                    log.error("[IMPORT] Job ${job.id} failed (${job.source.wireValue} @${job.inputRef}): ${e.message}", e)
                     repository.transition(job.id, ImportStatus.ACTIVE, ImportStatus.FAILED, failure)
                     notify(job.id)
                 }

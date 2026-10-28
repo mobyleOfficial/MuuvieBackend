@@ -76,6 +76,8 @@ import org.mobyle.data.local.imports.ImportDataSourceImpl
 import org.mobyle.data.repository.FilmowImportReader
 import org.mobyle.data.repository.ImportRepositoryImpl
 import org.mobyle.data.repository.TmdbMovieCandidateSearch
+import org.mobyle.data.repository.TmdbMovieResolver
+import org.mobyle.domain.repository.MovieResolver
 import org.mobyle.data.service.ImportJobRunner
 import org.mobyle.domain.repository.MoviesRepository
 import org.mobyle.domain.repository.ProfileRepository
@@ -167,10 +169,15 @@ val dataModule = module {
         MovieCatalogDataSourceImpl()
     }
 
+    single<MovieResolver> {
+        TmdbMovieResolver(tmdbDataSource = get(), candidateSearch = TmdbMovieCandidateSearch(tmdbDataSource = get()))
+    }
+
     single<MovieEnrichmentService> {
         MovieEnrichmentService(
             catalogDataSource = get(),
-            tmdbDataSource = get()
+            tmdbDataSource = get(),
+            resolver = get()
         )
     }
 
@@ -319,8 +326,9 @@ val dataModule = module {
     single<ImportJobQueue> {
         ImportJobRunner(
             repository = get(),
-            readers = listOf(FilmowImportReader(filmowDataSource = get())),
-            candidateSearch = TmdbMovieCandidateSearch(tmdbDataSource = get()),
+            readers = listOf(FilmowImportReader(filmowDataSource = get(), catalog = get())),
+            resolver = get(),
+            enrichment = get(),
             webSocketManager = get(),
             activities = get()
         )

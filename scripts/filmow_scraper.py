@@ -12,6 +12,7 @@ Output:
 """
 
 import json
+import os
 import re
 import sys
 import time
@@ -34,7 +35,25 @@ def create_session(cookies_str=""):
         log(f"[SESSION] Cookies set: {[k for k in session.cookies.keys()]}")
     else:
         log("[SESSION] No cookies provided — scraping as anonymous user")
+    log(f"[SESSION] User-Agent: {session.headers.get('User-Agent')}")
+    log(f"[SESSION] cloudscraper {getattr(cloudscraper, '__version__', '?')}, Python {sys.version.split()[0]}")
     return session
+
+
+def log_blocked_response(session, response):
+    """Logs why a request was refused (e.g. a Cloudflare challenge). Cookie values are never logged."""
+    headers = response.headers
+    title_match = re.search(r"<title>(.*?)</title>", response.text, re.IGNORECASE | re.DOTALL)
+    title = title_match.group(1).strip() if title_match else None
+    log(f"[HTTP][BLOCKED] {response.status_code} {response.reason} for {response.url}")
+    log(f"[HTTP][BLOCKED]   server={headers.get('server')} cf-mitigated={headers.get('cf-mitigated')} "
+        f"cf-ray={headers.get('cf-ray')} content-type={headers.get('content-type')}")
+    log(f"[HTTP][BLOCKED]   page title={title!r}")
+    log(f"[HTTP][BLOCKED]   request User-Agent={response.request.headers.get('User-Agent')}")
+    log(f"[HTTP][BLOCKED]   cookies sent={[c.name for c in session.cookies]}")
+    log(f"[HTTP][BLOCKED]   cookies set by response={list(response.cookies.keys())}")
+    if headers.get("cf-mitigated") == "challenge" or (title and "just a moment" in title.lower()):
+        log("[HTTP][BLOCKED]   -> Cloudflare challenge: the request was refused before reaching Filmow")
 
 
 def check_authenticated(soup):
@@ -67,8 +86,11 @@ def get_page(session, url):
             log(f"[HTTP] Rate limited, waiting {wait:.0f}s...")
             time.sleep(wait)
             continue
+        if last_response.status_code >= 400:
+            log_blocked_response(session, last_response)
         last_response.raise_for_status()
         return BeautifulSoup(last_response.text, "html.parser")
+    log_blocked_response(session, last_response)
     last_response.raise_for_status()
 
 
@@ -86,6 +108,7 @@ def scrape_profile_page(session, username):
     display_name = username
     recent = []
     stats = {}
+    authenticated = None
 
     try:
         soup = get_page(session, f"{BASE_URL}/@{username}")
@@ -140,9 +163,9 @@ def scrape_profile_page(session, username):
             log(f"Recently watched: {len(recent)} items")
 
     except Exception as e:
-        log(f"Failed to scrape profile page for @{username}: {e}")
+        log(f"[ERROR] Failed to scrape profile page for @{username}: {type(e).__name__}: {e}")
 
-    return display_name, stats, recent
+    return display_name, stats, recent, authenticated
 
 
 _PT_MONTHS = {
@@ -671,13 +694,14 @@ def scrape_profile(username, cookies_str=""):
     t_start = time.time()
 
     log(f"[PHASE] scrape_profile_page...")
-    display_name, stats, recently_watched = scrape_profile_page(session, username)
+    display_name, stats, recently_watched, authenticated = scrape_profile_page(session, username)
+    details = DetailFetcher(session, errors, load_known_ids(), authenticated is True)
     log(f"[PHASE] scrape_profile_page done in {time.time() - t_start:.1f}s")
 
     t = time.time()
     log(f"[PHASE] fetching detail data for {len(recently_watched)} recently watched movies...")
     for movie in recently_watched:
-        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        detail = details.get(movie, watched=True)
         movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] recently watched detail data done in {time.time() - t:.1f}s")
 
@@ -689,7 +713,7 @@ def scrape_profile(username, cookies_str=""):
     t = time.time()
     log(f"[PHASE] fetching detail data for {len(watched)} movies...")
     for movie in watched:
-        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        detail = details.get(movie, watched=True)
         movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] detail data done in {time.time() - t:.1f}s")
 
@@ -701,7 +725,7 @@ def scrape_profile(username, cookies_str=""):
     t = time.time()
     log(f"[PHASE] fetching detail data for {len(watchlist)} watchlist movies...")
     for movie in watchlist:
-        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        detail = details.get(movie)
         movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] watchlist detail data done in {time.time() - t:.1f}s")
 
@@ -713,7 +737,7 @@ def scrape_profile(username, cookies_str=""):
     t = time.time()
     log(f"[PHASE] fetching detail data for {len(favorites)} favorites movies...")
     for movie in favorites:
-        detail = fetch_detail_data(session, movie.get("href", ""), errors)
+        detail = details.get(movie)
         movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] favorites detail data done in {time.time() - t:.1f}s")
 
@@ -727,11 +751,16 @@ def scrape_profile(username, cookies_str=""):
     log(f"[PHASE] fetching detail data for {list_movie_count} list movies...")
     for lst in user_lists:
         for movie in lst.get("movies", []):
-            detail = fetch_detail_data(session, movie.get("href", ""), errors)
+            detail = details.get(movie)
             movie.update({k: v for k, v in detail.items() if v is not None})
     log(f"[PHASE] list movies detail data done in {time.time() - t:.1f}s")
 
     log(f"[PHASE] Total scrape time: {time.time() - t_start:.1f}s")
+    log(f"[DETAILS] fetched={details.fetched} cached={details.cached} skipped_known={details.skipped}")
+    log(f"[SUMMARY] watched={len(watched)} watchlist={len(watchlist)} favorites={len(favorites)} "
+        f"lists={len(user_lists)} recentlyWatched={len(recently_watched)} errors={len(errors)}")
+    for error in errors[:10]:
+        log(f"[SUMMARY]   error: {error}")
 
     return {
         "username": username,
@@ -744,6 +773,52 @@ def scrape_profile(username, cookies_str=""):
         "lists": user_lists,
         "errors": errors,
     }
+
+
+def load_known_ids():
+    """Filmow ids the backend already resolves (TMDB id or IMDb link), one per line."""
+    path = os.environ.get("FILMOW_KNOWN_IDS_FILE")
+    if not path:
+        return set()
+    try:
+        with open(path, encoding="utf-8") as known:
+            ids = {line.strip() for line in known if line.strip()}
+        log(f"[DETAILS] {len(ids)} known Filmow ids")
+        return ids
+    except OSError as e:
+        log(f"[DETAILS] Could not read known ids: {e}")
+        return set()
+
+
+class DetailFetcher:
+    """Detail pages, fetched once per run. Known movies skip the page unless the user's
+    watched date is wanted (watched sections with a logged-in session)."""
+
+    def __init__(self, session, errors, known_ids, authenticated):
+        self.session = session
+        self.errors = errors
+        self.known_ids = known_ids
+        self.authenticated = authenticated
+        self.cache = {}
+        self.fetched = 0
+        self.cached = 0
+        self.skipped = 0
+
+    def get(self, movie, watched=False):
+        href = movie.get("href", "")
+        if not href:
+            return {}
+        if href in self.cache:
+            self.cached += 1
+            return self.cache[href]
+        needs_date = watched and self.authenticated
+        if movie.get("filmowId") in self.known_ids and not needs_date:
+            self.skipped += 1
+            return {}
+        self.fetched += 1
+        detail = fetch_detail_data(self.session, href, self.errors)
+        self.cache[href] = detail
+        return detail
 
 
 def log(msg):
@@ -767,6 +842,7 @@ def main():
         result = scrape_profile(username, cookies)
         print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
+        log(f"[FATAL] {type(e).__name__}: {e}")
         print(json.dumps({"error": str(e), "username": username}))
         sys.exit(1)
 

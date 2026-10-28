@@ -122,6 +122,7 @@ All routes are served under `/api/v1` (contract: `research/decisions/api-v1-cont
 
 With a token, `/movies/trending`, `/movies/search`, `/movies/discover` and the `/discover/movies/*` rankings carry `me: { status, rating }` on each movie the viewer has on Já assisti / Quero ver or rated; the field is absent otherwise.
 | GET    | `/movies/{id}`                | Movie details (TMDB id), without the TMDB score. With a token it carries `me`: shelves, situation (`watched`/`want_to_watch`), progress, rating | —                     |
+| GET    | `/movies`                     | Movie details by `id` (database), `tmdbId` or `filmowId`. An imported movie without TMDB id is resolved and enriched on the spot; `matchStatus` is `matched`, `pending` or `unmatched` (only the source's data) | `id`, `tmdbId`, `filmowId` |
 | GET    | `/persons/{id}`, `/persons/tmdb/{tmdbId}` | Person with the catalog movies they are in (database or TMDB id) | —                                                                                                  |
 
 ### Profile
@@ -194,6 +195,8 @@ A watch log is one session: `mode` `watched` (the whole movie), `minutes` or `pe
 ### Imports
 
 An import is a background job: `pending → reading → preview → importing → done` (or `failed` / `cancelled`). Nothing is written before the preview is confirmed. Reimporting is idempotent: watched movies go to "Já assisti", the watchlist to "Quero ver", favorites get the `favorite` label, the stars become a label (4.5–5 loved, 3.5–4 liked, 2.5–3 neutral, below not_for_me), dated sessions become watch logs and lists become shelves (matched by source id, so a reimport only adds movies). A movie the user already has in the Muuvie is left as it is. Each change is pushed on the WebSocket as `import_progress` with `{ jobId, source, status, processed, total }`. Only Filmow is available; `letterboxd` answers 503 `import_source_unavailable`. Filmow cookies are used to read the profile and never stored.
+
+Imported movies become catalog movies of our own and are linked to TMDB in a cascade: the IMDb link, then an exact title and year, then a title confirmed by the director (localized, English, original and TMDB alternative titles, year ±1). Linking runs when the user opens the movie, right after the import for its movies, and in the background enrichment loop; a TMDB error retries with backoff (2 min doubling up to a day) and a movie nothing matches with confidence becomes `unmatched` and leaves the queue (`movies.match_status`, `match_method`, V19). The scraper skips the Filmow detail page of movies the catalog already resolves, unless it needs the user's watched date. See `research/features/filmow-movie-enrichment/spec.md` in the meta-repo.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

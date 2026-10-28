@@ -4,6 +4,7 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.remote.filmow.FilmowDataSource
 import org.mobyle.domain.model.FilmowMoviePartial
 import org.mobyle.domain.model.FilmowProfile
@@ -15,12 +16,18 @@ import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.policy.MovieMatchPolicy
 import org.mobyle.domain.repository.ImportSourceReader
 
-/** F3.2: reads a Filmow profile with the scraper and maps it to the neutral bundle. */
-class FilmowImportReader(private val filmowDataSource: FilmowDataSource) : ImportSourceReader {
+/**
+ * F3.2: reads a Filmow profile with the scraper and maps it to the neutral bundle. Movies the
+ * catalog already resolves skip their Filmow detail page (filmow-movie-enrichment).
+ */
+class FilmowImportReader(
+    private val filmowDataSource: FilmowDataSource,
+    private val catalog: MovieCatalogDataSource
+) : ImportSourceReader {
     override val source = ImportSource.FILMOW
 
     override suspend fun read(inputRef: String, credentials: String): ImportBundle =
-        toBundle(filmowDataSource.scrapeProfile(credentials, inputRef))
+        toBundle(filmowDataSource.scrapeProfile(credentials, inputRef, catalog.getResolvableFilmowIds()))
 
     companion object {
         /** "Recently watched" holds the same movies as "watched", sometimes with the date. */
@@ -54,6 +61,7 @@ class FilmowImportReader(private val filmowDataSource: FilmowDataSource) : Impor
                 externalId = filmowId ?: "title:${MovieMatchPolicy.normalize(title)}:${year ?: ""}",
                 title = title,
                 originalTitle = originalTitle,
+                localTitle = localTitle,
                 year = year,
                 posterUrl = posterPath,
                 overview = overview.takeIf { it.isNotBlank() },

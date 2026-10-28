@@ -27,6 +27,13 @@ class TmdbDataSourceImpl(
         }.body()
     }
 
+    override suspend fun getMovieFacts(movieId: Int): TmdbMovieFactsResponse {
+        return httpClient.get("movie/$movieId") {
+            parameter("language", "en-US")
+            parameter("append_to_response", "credits,alternative_titles")
+        }.body()
+    }
+
     override suspend fun searchMovies(query: String, page: Int, year: Int?, language: String?): TmdbMovieListResponse {
         return httpClient.get("search/movie") {
             parameter("query", query)
