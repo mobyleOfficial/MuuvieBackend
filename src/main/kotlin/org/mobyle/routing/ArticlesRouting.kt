@@ -1,37 +1,34 @@
 package org.mobyle.routing
 
-import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import org.mobyle.data.remote.auth.tryAuthenticateJWT
 import org.mobyle.di.injection
-import org.mobyle.domain.usecase.articles.GetArticleDetail
-import org.mobyle.domain.usecase.articles.GetArticles
+import org.mobyle.domain.usecase.articles.GetArticle
+import org.mobyle.domain.usecase.articles.GetArticleSources
+import org.mobyle.domain.usecase.articles.GetArticlesPage
+import org.mobyle.domain.usecase.auth.ValidateToken
 
+/** News, paged with the Page envelope, filtered by `source` and with the cited movies (F5.8). */
 fun Route.getArticlesRouting() {
-    val getArticles by injection<GetArticles>()
-    val getArticleDetail by injection<GetArticleDetail>()
+    val getArticlesPage by injection<GetArticlesPage>()
+    val getArticle by injection<GetArticle>()
+    val getArticleSources by injection<GetArticleSources>()
+    val validateToken by injection<ValidateToken>()
 
     get("/articles") {
-        val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
-        val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 10
+        val page = call.pageRequest() ?: return@get
+        call.respond(getArticlesPage(call.parameters["source"], page))
+    }
 
-        val articles = getArticles(page, pageSize)
-        call.respond(articles)
+    get("/articles/sources") {
+        call.respond(getArticleSources())
     }
 
     get("/articles/{articleId}") {
-        val articleId = call.parameters["articleId"]?.toLongOrNull()
-        if (articleId == null) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid article ID"))
-            return@get
-        }
-
-        val article = getArticleDetail(articleId)
-        if (article != null) {
-            call.respond(article)
-        } else {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Article not found"))
-        }
+        val articleId = call.longParameter("articleId") ?: return@get
+        val viewerId = call.tryAuthenticateJWT(validateToken)?.claims?.userId
+        call.respond(getArticle(viewerId, articleId))
     }
 }

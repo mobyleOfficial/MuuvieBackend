@@ -14,6 +14,8 @@ interface MovieCatalogDataSource {
     fun getDbIdByFilmowId(filmowId: String): Long?
     fun upsertMovie(movie: Movie, filmowId: String? = null, letterboxdId: String? = null): Long
     fun enrichMovie(tmdbId: Int, detail: MovieDetail, credits: TmdbCredits?)
+    /** Original language, production countries and keywords, read by the maratona challenges (B7). */
+    fun saveMovieFacts(tmdbId: Int, originalLanguage: String?, countries: List<String>, keywords: List<Pair<Int, String>>)
     fun saveSimilarMovies(tmdbId: Int, similars: List<Movie>)
     fun saveWatchProviders(tmdbId: Int, providers: List<WatchProvider>)
     fun getSimilarMovies(tmdbId: Int): CachedData<List<Movie>>

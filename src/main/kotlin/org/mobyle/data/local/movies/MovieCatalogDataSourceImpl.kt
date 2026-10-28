@@ -6,10 +6,10 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.mobyle.data.local.database.*
 import org.mobyle.data.remote.tmdb.model.TmdbCredits
-import org.mobyle.domain.model.FilmowMoviePartial
-import org.mobyle.domain.model.Movie
-import org.mobyle.domain.model.MovieDetail
-import org.mobyle.domain.model.WatchProvider
+import org.mobyle.domain.model.*
+import org.slf4j.LoggerFactory
+
+private val catalogLog = LoggerFactory.getLogger(MovieCatalogDataSourceImpl::class.java)
 
 class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
@@ -131,12 +131,40 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 it[year] = detail.releaseDate?.take(4)?.toIntOrNull()
                 it[enrichedAt] = Clock.System.now()
                 it[needsEnrichment] = false
+                if (detail.trailerKey != null) it[trailerKey] = detail.trailerKey
             }
 
             syncGenres(movieDbId, detail.genres)
 
             if (credits != null) {
                 syncCredits(movieDbId, credits)
+            }
+        }
+    }
+
+    override fun saveMovieFacts(tmdbId: Int, originalLanguage: String?, countries: List<String>, keywords: List<Pair<Int, String>>) {
+        transaction {
+            val movieDbId = MoviesTable.select(MoviesTable.id)
+                .where { MoviesTable.tmdbId eq tmdbId }
+                .firstOrNull()
+                ?.get(MoviesTable.id)?.value ?: return@transaction
+            MoviesTable.update({ MoviesTable.id eq movieDbId }) {
+                it[MoviesTable.originalLanguage] = originalLanguage?.take(10)
+            }
+            MovieCountriesTable.deleteWhere { movieId eq movieDbId }
+            countries.filter { it.length == 2 }.map { it.uppercase() }.distinct().forEach { code ->
+                MovieCountriesTable.insert {
+                    it[movieId] = movieDbId
+                    it[country] = code
+                }
+            }
+            MovieKeywordsTable.deleteWhere { movieId eq movieDbId }
+            keywords.distinctBy { it.first }.forEach { (keywordId, name) ->
+                MovieKeywordsTable.insert {
+                    it[movieId] = movieDbId
+                    it[MovieKeywordsTable.keywordId] = keywordId
+                    it[MovieKeywordsTable.name] = name.take(255)
+                }
             }
         }
     }
@@ -164,10 +192,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                     }
                 }
 
-                // Re-point UserMovies references, handling duplicates
-                val existingUserMovies = UserMoviesTable.selectAll()
+                // Re-point UserMovies references, handling duplicates (one row per user and movie)
+                val usersWithRealMovie = UserMoviesTable.selectAll()
                     .where { UserMoviesTable.movieId eq realDbId }
-                    .map { Triple(it[UserMoviesTable.userId].value, it[UserMoviesTable.importSource], it[UserMoviesTable.id].value) }
+                    .map { it[UserMoviesTable.userId].value }
                     .toSet()
 
                 val oldUserMovies = UserMoviesTable.selectAll()
@@ -175,9 +203,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                     .toList()
 
                 for (row in oldUserMovies) {
-                    val userId = row[UserMoviesTable.userId].value
-                    val source = row[UserMoviesTable.importSource]
-                    val hasDuplicate = existingUserMovies.any { it.first == userId && it.second == source }
+                    val hasDuplicate = row[UserMoviesTable.userId].value in usersWithRealMovie
                     if (hasDuplicate) {
                         UserMoviesTable.deleteWhere { UserMoviesTable.id eq row[UserMoviesTable.id] }
                     } else {
@@ -188,25 +214,41 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 }
 
                 // Re-point list items, handling duplicates
-                val existingListItems = UserListItemsTable.selectAll()
-                    .where { UserListItemsTable.movieId eq realDbId }
-                    .map { it[UserListItemsTable.listId].value }
+                val existingListItems = ShelfItemsTable.selectAll()
+                    .where { ShelfItemsTable.movieId eq realDbId }
+                    .map { it[ShelfItemsTable.shelfId].value }
                     .toSet()
 
-                val oldListItems = UserListItemsTable.selectAll()
-                    .where { UserListItemsTable.movieId eq oldDbId }
+                val oldListItems = ShelfItemsTable.selectAll()
+                    .where { ShelfItemsTable.movieId eq oldDbId }
                     .toList()
 
                 for (row in oldListItems) {
-                    val listId = row[UserListItemsTable.listId].value
+                    val listId = row[ShelfItemsTable.shelfId].value
                     if (existingListItems.contains(listId)) {
-                        UserListItemsTable.deleteWhere { UserListItemsTable.id eq row[UserListItemsTable.id] }
+                        ShelfItemsTable.deleteWhere { ShelfItemsTable.id eq row[ShelfItemsTable.id] }
                     } else {
-                        UserListItemsTable.update({ UserListItemsTable.id eq row[UserListItemsTable.id] }) {
+                        ShelfItemsTable.update({ ShelfItemsTable.id eq row[ShelfItemsTable.id] }) {
                             it[movieId] = realDbId
                         }
                     }
                 }
+
+                // Re-point watch logs, dropping imported ones the real movie already has
+                val importedOnReal = WatchLogsTable.selectAll()
+                    .where { (WatchLogsTable.movieId eq realDbId) and WatchLogsTable.externalId.isNotNull() }
+                    .map { Triple(it[WatchLogsTable.userId].value, it[WatchLogsTable.importSource], it[WatchLogsTable.externalId]) }
+                    .toSet()
+                for (row in WatchLogsTable.selectAll().where { WatchLogsTable.movieId eq oldDbId }.toList()) {
+                    val key = Triple(row[WatchLogsTable.userId].value, row[WatchLogsTable.importSource], row[WatchLogsTable.externalId])
+                    if (row[WatchLogsTable.externalId] != null && key in importedOnReal) {
+                        WatchLogsTable.deleteWhere { WatchLogsTable.id eq row[WatchLogsTable.id] }
+                    } else {
+                        WatchLogsTable.update({ WatchLogsTable.id eq row[WatchLogsTable.id] }) { it[movieId] = realDbId }
+                    }
+                }
+                UsersTable.update({ UsersTable.watchingNowMovieId eq oldDbId }) { it[watchingNowMovieId] = realDbId }
+                CineClubeSessionsTable.update({ CineClubeSessionsTable.movieId eq oldDbId }) { it[movieId] = realDbId }
 
                 // Delete orphaned placeholder (respect FK order)
                 MovieSimilarsTable.deleteWhere { MovieSimilarsTable.movieId eq oldDbId }
@@ -268,24 +310,36 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .where { MovieGenresTable.movieId eq movieDbId }
                 .map { it[GenresTable.name] }
 
-            val director = (MovieCastTable innerJoin PeopleTable)
-                .selectAll()
-                .where {
-                    (MovieCastTable.movieId eq movieDbId) and
-                        (MovieCastTable.role eq "director")
-                }
-                .firstOrNull()
-                ?.get(PeopleTable.name)
+            val director = runCatching {
+                (MovieCastTable innerJoin PeopleTable)
+                    .selectAll()
+                    .where { (MovieCastTable.movieId eq movieDbId) and (MovieCastTable.role eq "director") }
+                    .firstOrNull()
+                    ?.let { r -> Person(id = r[PeopleTable.id].value, tmdbPersonId = r[PeopleTable.tmdbId], name = r[PeopleTable.name], profilePath = r[PeopleTable.profilePath]) }
+            }.getOrElse { catalogLog.warn("director read failed: ${it.message}"); null }
 
-            val cast = (MovieCastTable innerJoin PeopleTable)
-                .selectAll()
-                .where {
-                    (MovieCastTable.movieId eq movieDbId) and
-                        (MovieCastTable.role eq "actor")
-                }
-                .orderBy(MovieCastTable.position, SortOrder.ASC)
-                .limit(10)
-                .map { it[PeopleTable.name] }
+            val writers = runCatching {
+                (MovieCastTable innerJoin PeopleTable)
+                    .selectAll()
+                    .where { (MovieCastTable.movieId eq movieDbId) and (MovieCastTable.role eq "writer") }
+                    .orderBy(MovieCastTable.position, SortOrder.ASC)
+                    .map { r -> Person(id = r[PeopleTable.id].value, tmdbPersonId = r[PeopleTable.tmdbId], name = r[PeopleTable.name], profilePath = r[PeopleTable.profilePath]) }
+            }.getOrElse { catalogLog.warn("writers read failed: ${it.message}"); emptyList() }
+
+            val cast = runCatching {
+                (MovieCastTable innerJoin PeopleTable)
+                    .selectAll()
+                    .where { (MovieCastTable.movieId eq movieDbId) and (MovieCastTable.role eq "actor") }
+                    .orderBy(MovieCastTable.position, SortOrder.ASC)
+                    .limit(10)
+                    .map { r ->
+                        CastMember(
+                            person = Person(id = r[PeopleTable.id].value, tmdbPersonId = r[PeopleTable.tmdbId], name = r[PeopleTable.name], profilePath = r[PeopleTable.profilePath]),
+                            character = r[MovieCastTable.character],
+                            order = r[MovieCastTable.position]
+                        )
+                    }
+            }.getOrElse { catalogLog.warn("cast read failed: ${it.message}"); emptyList() }
 
             val similars = resolveSimilarMovies(movieDbId)
 
@@ -313,13 +367,11 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 runtime = row[MoviesTable.runtime],
                 genres = genres,
                 director = director,
+                writers = writers,
                 cast = cast,
+                trailerKey = row[MoviesTable.trailerKey],
                 watchProviders = providers,
-                similarMovies = similars,
-                popularReviews = emptyList(),
-                reviewCount = 0,
-                listCount = 0,
-                likeCount = 0
+                similarMovies = similars
             )
         }
     }
@@ -508,12 +560,14 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
     }
 
     private fun upsertCastEntry(movieDbId: Long, personDbId: Long, role: String, character: String?, position: Int) {
+        val now = Clock.System.now()
         MovieCastTable.upsert(MovieCastTable.movieId, MovieCastTable.personId, MovieCastTable.role) {
             it[movieId] = movieDbId
             it[personId] = personDbId
             it[MovieCastTable.role] = role
             it[MovieCastTable.character] = character
             it[MovieCastTable.position] = position
+            it[MovieCastTable.fetchedAt] = now
         }
     }
 
@@ -537,6 +591,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             it[PeopleTable.tmdbId] = tmdbId
             it[PeopleTable.name] = name
             it[PeopleTable.profilePath] = profilePath
+            it[PeopleTable.fetchedAt] = Clock.System.now()
         }.value
     }
 
@@ -614,29 +669,45 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             }
 
             val director = if (tmdbId != null) {
-                (MovieCastTable innerJoin PeopleTable)
-                    .selectAll()
-                    .where {
-                        (MovieCastTable.movieId eq dbId) and
-                            (MovieCastTable.role eq "director")
-                    }
-                    .firstOrNull()
-                    ?.get(PeopleTable.name)
-                    ?: row[MoviesTable.director]
+                runCatching {
+                    (MovieCastTable innerJoin PeopleTable)
+                        .selectAll()
+                        .where { (MovieCastTable.movieId eq dbId) and (MovieCastTable.role eq "director") }
+                        .firstOrNull()
+                        ?.let { r -> Person(id = r[PeopleTable.id].value, tmdbPersonId = r[PeopleTable.tmdbId], name = r[PeopleTable.name], profilePath = r[PeopleTable.profilePath]) }
+                        ?: row[MoviesTable.director]?.let { name -> Person(id = 0L, tmdbPersonId = null, name = name, profilePath = null) }
+                }.getOrElse { catalogLog.warn("director read failed: ${it.message}"); null }
             } else {
-                row[MoviesTable.director]
+                row[MoviesTable.director]?.let { name -> Person(id = 0L, tmdbPersonId = null, name = name, profilePath = null) }
+            }
+
+            val writers = if (tmdbId != null) {
+                runCatching {
+                    (MovieCastTable innerJoin PeopleTable)
+                        .selectAll()
+                        .where { (MovieCastTable.movieId eq dbId) and (MovieCastTable.role eq "writer") }
+                        .orderBy(MovieCastTable.position, SortOrder.ASC)
+                        .map { r -> Person(id = r[PeopleTable.id].value, tmdbPersonId = r[PeopleTable.tmdbId], name = r[PeopleTable.name], profilePath = r[PeopleTable.profilePath]) }
+                }.getOrElse { catalogLog.warn("writers read failed: ${it.message}"); emptyList() }
+            } else {
+                emptyList()
             }
 
             val cast = if (tmdbId != null) {
-                (MovieCastTable innerJoin PeopleTable)
-                    .selectAll()
-                    .where {
-                        (MovieCastTable.movieId eq dbId) and
-                            (MovieCastTable.role eq "actor")
-                    }
-                    .orderBy(MovieCastTable.position, SortOrder.ASC)
-                    .limit(10)
-                    .map { it[PeopleTable.name] }
+                runCatching {
+                    (MovieCastTable innerJoin PeopleTable)
+                        .selectAll()
+                        .where { (MovieCastTable.movieId eq dbId) and (MovieCastTable.role eq "actor") }
+                        .orderBy(MovieCastTable.position, SortOrder.ASC)
+                        .limit(10)
+                        .map { r ->
+                            CastMember(
+                                person = Person(id = r[PeopleTable.id].value, tmdbPersonId = r[PeopleTable.tmdbId], name = r[PeopleTable.name], profilePath = r[PeopleTable.profilePath]),
+                                character = r[MovieCastTable.character],
+                                order = r[MovieCastTable.position]
+                            )
+                        }
+                }.getOrElse { catalogLog.warn("cast read failed: ${it.message}"); emptyList() }
             } else {
                 emptyList()
             }
@@ -680,13 +751,11 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 runtime = row[MoviesTable.runtime],
                 genres = genres,
                 director = director,
+                writers = writers,
                 cast = cast,
+                trailerKey = row[MoviesTable.trailerKey],
                 watchProviders = providers,
-                similarMovies = similars,
-                popularReviews = emptyList(),
-                reviewCount = 0,
-                listCount = 0,
-                likeCount = 0
+                similarMovies = similars
             )
         }
     }

@@ -2,8 +2,6 @@ package org.mobyle.domain.repository
 
 import org.mobyle.domain.model.*
 import org.mobyle.model.MovieListing
-import org.mobyle.model.MovieListListing
-import org.mobyle.model.MovieReviewListing
 
 interface MoviesRepository {
     suspend fun getTrendingMovies(page: Int): MovieListing
@@ -24,13 +22,7 @@ interface MoviesRepository {
     suspend fun getGenres(): List<Genre>
     suspend fun getCountries(): List<Country>
     suspend fun getLanguages(): List<Language>
-    suspend fun getMovieReviews(page: Int, userId: String?, movieId: Int?): MovieReviewListing
-    suspend fun getUserFavoriteMovies(userId: String, page: Int): MovieListing
-    suspend fun getUserWatchList(userId: String, page: Int): MovieListing
-    suspend fun getUserWatchedMovies(userId: String, page: Int): MovieListing
-    suspend fun getMovieLists(page: Int, userId: String?): MovieListListing
-    suspend fun getUserMovieLists(page: Int): MovieListListing
-    suspend fun getMovieListDetail(listId: Int, page: Int): MovieListDetail
-    suspend fun getFeaturedLists(page: Int): MovieListListing
-    suspend fun getRecentMovies(userId: String, limit: Int = 10): MovieListing
+    suspend fun getPersonDetail(personId: Long): PersonDetail?
+    /** The movie detail lists the cast straight from TMDB, so the app only has the TMDB id (F5.7). */
+    suspend fun getPersonDetailByTmdbId(tmdbId: Int): PersonDetail?
 }

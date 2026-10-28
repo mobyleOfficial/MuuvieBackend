@@ -18,8 +18,9 @@ interface TmdbDataSource {
         country: String?,
         voteCountGte: Int?
     ): TmdbMovieListResponse
+    /** discover/movie with raw TMDB parameters (B7: suggestions for a challenge's criteria). */
+    suspend fun discoverWith(params: Map<String, String>, page: Int): TmdbMovieListResponse
     suspend fun getGenres(): TmdbGenreListResponse
     suspend fun getCountries(): List<TmdbCountry>
     suspend fun getLanguages(): List<TmdbLanguage>
-    suspend fun getMovieReviews(movieId: Int, page: Int): TmdbReviewListResponse
 }

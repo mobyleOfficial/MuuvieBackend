@@ -80,7 +80,7 @@ fun Route.getAuthRouting() {
             log.error("OAuth callback request parsing error: ${e.message}")
             call.respond(
                 HttpStatusCode.BadRequest,
-                ErrorResponse("invalid_request", "Invalid request body: ${e.message}")
+                ErrorResponse("invalid_request", "Invalid request body")
             )
         }
     }
@@ -114,6 +114,7 @@ fun Route.getAuthRouting() {
                     accessToken = authToken.accessToken,
                     tokenType = authToken.tokenType,
                     expiresIn = authToken.expiresIn,
+                    refreshToken = authToken.refreshToken,
                     profile = profile
                 )
 
@@ -152,7 +153,7 @@ fun Route.getAuthRouting() {
             log.error("Login request parsing error: ${e.message}")
             call.respond(
                 HttpStatusCode.BadRequest,
-                ErrorResponse("invalid_request", "Invalid request body: ${e.message}")
+                ErrorResponse("invalid_request", "Invalid request body")
             )
         }
     }
@@ -186,6 +187,7 @@ fun Route.getAuthRouting() {
                     accessToken = authToken.accessToken,
                     tokenType = authToken.tokenType,
                     expiresIn = authToken.expiresIn,
+                    refreshToken = authToken.refreshToken,
                     profile = profile
                 )
 
@@ -281,7 +283,9 @@ fun Route.getAuthRouting() {
             }
 
             val token = authHeader.substring("Bearer ".length)
-            val result = logoutUser(token)
+            // Optional body { "refreshToken": "..." } also ends the refresh session.
+            val refreshToken = runCatching { call.receive<RefreshTokenRequest>() }.getOrNull()?.refreshToken
+            val result = logoutUser(token, refreshToken?.takeIf { it.isNotBlank() })
 
             if (result.isSuccess) {
                 call.respond(HttpStatusCode.NoContent)
@@ -324,7 +328,8 @@ fun Route.getAuthRouting() {
                     RefreshTokenResponse(
                         accessToken = authToken.accessToken,
                         tokenType = authToken.tokenType,
-                        expiresIn = authToken.expiresIn
+                        expiresIn = authToken.expiresIn,
+                        refreshToken = authToken.refreshToken
                     )
                 )
                 log.info("Token refreshed successfully for user ${authToken.user.id}")
@@ -339,7 +344,7 @@ fun Route.getAuthRouting() {
             log.error("Token refresh request parsing error: ${e.message}")
             call.respond(
                 HttpStatusCode.BadRequest,
-                ErrorResponse("invalid_request", "Invalid request body: ${e.message}")
+                ErrorResponse("invalid_request", "Invalid request body")
             )
         }
     }
@@ -358,7 +363,8 @@ data class AuthTokenResponse(
 data class RefreshTokenResponse(
     val accessToken: String,
     val tokenType: String,
-    val expiresIn: Long
+    val expiresIn: Long,
+    val refreshToken: String? = null
 )
 
 @Serializable

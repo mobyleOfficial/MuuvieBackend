@@ -3,8 +3,6 @@ package org.mobyle.data.local.database
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import org.jetbrains.exposed.sql.Database
-import org.jetbrains.exposed.sql.SchemaUtils
-import org.jetbrains.exposed.sql.transactions.transaction
 
 object DatabaseConfig {
     fun init() {
@@ -27,28 +25,9 @@ object DatabaseConfig {
             validate()
         }
 
-        Database.connect(HikariDataSource(config))
-
-        transaction {
-            SchemaUtils.createMissingTablesAndColumns(
-                UsersTable,
-                MoviesTable,
-                GenresTable,
-                MovieGenresTable,
-                PeopleTable,
-                MovieCastTable,
-                MovieSimilarsTable,
-                MovieWatchProvidersTable,
-                UserMoviesTable,
-                UserFollowsTable,
-                UserListsTable,
-                UserListItemsTable,
-                TagsTable,
-                MovieTagsTable,
-                ArticlesTable,
-                TokenBlocklistTable
-            )
-        }
+        val dataSource = HikariDataSource(config)
+        DatabaseMigrations.migrate(dataSource)
+        Database.connect(dataSource)
     }
 
     private data class DbConnectionInfo(val jdbcUrl: String, val username: String?, val password: String?)

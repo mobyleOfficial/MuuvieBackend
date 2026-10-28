@@ -20,6 +20,11 @@ dependencies {
     implementation("io.ktor:ktor-server-cors:2.3.0")
     implementation("io.ktor:ktor-server-websockets:2.3.0")
     implementation("io.ktor:ktor-server-auth:2.3.0")
+    // Observability (B11.2): request ids, request logs and Prometheus metrics.
+    implementation("io.ktor:ktor-server-call-id:2.3.0")
+    implementation("io.ktor:ktor-server-call-logging:2.3.0")
+    implementation("io.ktor:ktor-server-metrics-micrometer:2.3.0")
+    implementation("io.micrometer:micrometer-registry-prometheus:1.14.4")
     implementation("ch.qos.logback:logback-classic:1.2.10")
 
     // Ktor Client (for TMDB API calls)
@@ -41,6 +46,10 @@ dependencies {
     implementation("org.postgresql:postgresql:42.7.4")
     implementation("com.zaxxer:HikariCP:6.2.1")
 
+    // Versioned schema migrations (src/main/resources/db/migration)
+    implementation("org.flywaydb:flyway-core:10.20.1")
+    implementation("org.flywaydb:flyway-database-postgresql:10.20.1")
+
     // RSS/XML parsing
     implementation("org.jsoup:jsoup:1.18.1")
 
@@ -51,8 +60,12 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk:1.13.12")
+    testImplementation("io.ktor:ktor-client-mock:2.3.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("com.h2database:h2:2.2.224")
+    // Real PostgreSQL for migration tests, without Docker
+    testImplementation("io.zonky.test:embedded-postgres:2.0.7")
+    testImplementation(platform("io.zonky.test.postgres:embedded-postgres-binaries-bom:16.4.0"))
 }
 
 configurations.all {
@@ -68,6 +81,12 @@ configurations.all {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// flyway-core and flyway-database-postgresql both ship META-INF/services plugin
+// files; without merging, the fat JAR keeps only one and Flyway finds no migrations.
+tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
+    mergeServiceFiles()
 }
 
 application {

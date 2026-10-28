@@ -17,7 +17,7 @@ class TmdbDataSourceImpl(
 
     override suspend fun getMovieDetail(movieId: Int): TmdbMovieDetailResponse {
         return httpClient.get("movie/$movieId") {
-            parameter("append_to_response", "credits,watch/providers,similar,reviews")
+            parameter("append_to_response", "credits,videos,watch/providers,similar,reviews,keywords")
         }.body()
     }
 
@@ -60,6 +60,13 @@ class TmdbDataSourceImpl(
         }.body()
     }
 
+    override suspend fun discoverWith(params: Map<String, String>, page: Int): TmdbMovieListResponse {
+        return httpClient.get("discover/movie") {
+            parameter("page", page)
+            params.forEach { (name, value) -> parameter(name, value) }
+        }.body()
+    }
+
     override suspend fun getGenres(): TmdbGenreListResponse {
         return httpClient.get("genre/movie/list").body()
     }
@@ -70,11 +77,5 @@ class TmdbDataSourceImpl(
 
     override suspend fun getLanguages(): List<TmdbLanguage> {
         return httpClient.get("configuration/languages").body()
-    }
-
-    override suspend fun getMovieReviews(movieId: Int, page: Int): TmdbReviewListResponse {
-        return httpClient.get("movie/$movieId/reviews") {
-            parameter("page", page)
-        }.body()
     }
 }

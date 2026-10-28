@@ -6,23 +6,21 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.put
+import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.remote.auth.authenticateJWT
 import org.mobyle.di.injection
 import org.mobyle.domain.model.UserProfile
-import org.mobyle.data.local.user.UserDatabaseDataSource
-import org.mobyle.domain.usecase.profile.GetPublicProfile
-import org.mobyle.domain.usecase.profile.GetUserProfile
-import org.mobyle.domain.usecase.profile.UpdateUserProfile
+import org.mobyle.domain.repository.ImportRepository
 import org.mobyle.domain.usecase.auth.ValidateToken
-import org.mobyle.data.service.ScrapeStatusManager
+import org.mobyle.domain.usecase.profile.UpdateProfileResult
+import org.mobyle.domain.usecase.profile.UpdateUserProfile
 
+/** The signed-in user's account: GET and PUT /profile. */
 fun Route.getProfileRouting() {
-    val getUserProfile by injection<GetUserProfile>()
     val updateUserProfile by injection<UpdateUserProfile>()
-    val getPublicProfile by injection<GetPublicProfile>()
     val validateToken by injection<ValidateToken>()
     val userDatabaseDataSource by injection<UserDatabaseDataSource>()
-    val scrapeStatusManager by injection<ScrapeStatusManager>()
+    val importRepository by injection<ImportRepository>()
 
     get("/profile") {
         val principal = call.authenticateJWT(validateToken) ?: return@get
@@ -46,7 +44,7 @@ fun Route.getProfileRouting() {
             followingCount = userDatabaseDataSource.countFollowing(user.id),
             followersCount = userDatabaseDataSource.countFollowers(user.id),
             recentMovies = userDatabaseDataSource.getRecentWatchedMovies(user.id, limit = 10),
-            isScraping = scrapeStatusManager.isScraping(user.id)
+            isScraping = importRepository.hasRunningJob(user.id)
         )
         call.respond(HttpStatusCode.OK, profile)
     }
@@ -54,16 +52,43 @@ fun Route.getProfileRouting() {
     put("/profile") {
         val principal = call.authenticateJWT(validateToken) ?: return@put
         val profile = call.receive<UserProfile>()
-        updateUserProfile(profile)
-        call.respond(HttpStatusCode.OK)
-    }
-
-    get("/profile/{userId}") {
-        val userId = call.parameters["userId"]
-        if (userId.isNullOrBlank()) {
-            call.respond(HttpStatusCode.BadRequest, "User ID is required")
-            return@get
+        when (val result = updateUserProfile(profile.copy(id = principal.claims.userId))) {
+            UpdateProfileResult.Updated -> Unit
+            UpdateProfileResult.UsernameTaken -> {
+                call.respond(
+                    HttpStatusCode.Conflict,
+                    org.mobyle.data.remote.auth.ErrorResponse("username_taken", "Username is already in use")
+                )
+                return@put
+            }
+            is UpdateProfileResult.Invalid -> {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    org.mobyle.data.remote.auth.ErrorResponse("validation_failed", "Invalid ${result.field}")
+                )
+                return@put
+            }
         }
-        call.respond(getPublicProfile(userId))
+
+        val user = userDatabaseDataSource.findByEmail(principal.claims.email)
+        if (user == null) {
+            call.respond(
+                HttpStatusCode.NotFound,
+                org.mobyle.data.remote.auth.ErrorResponse("user_not_found", "User not found")
+            )
+            return@put
+        }
+        val updatedProfile = UserProfile(
+            id = user.id,
+            photoUrl = user.avatar ?: "",
+            username = user.username,
+            bio = user.bio ?: "",
+            moviesWatchedCount = userDatabaseDataSource.countWatchedMovies(user.id),
+            followingCount = userDatabaseDataSource.countFollowing(user.id),
+            followersCount = userDatabaseDataSource.countFollowers(user.id),
+            recentMovies = userDatabaseDataSource.getRecentWatchedMovies(user.id, limit = 10),
+            isScraping = importRepository.hasRunningJob(user.id)
+        )
+        call.respond(HttpStatusCode.OK, updatedProfile)
     }
 }
