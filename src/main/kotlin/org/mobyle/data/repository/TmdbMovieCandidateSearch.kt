@@ -6,11 +6,11 @@ import org.mobyle.domain.model.MovieCandidate
 import org.mobyle.domain.policy.MovieMatchPolicy
 import org.mobyle.domain.repository.MovieCandidateSearch
 
-/** Searches TMDB by the title (and the original title when it differs), filtered by year when known. */
+/** Searches TMDB by the original, the source and the localized titles, filtered by year when known. */
 class TmdbMovieCandidateSearch(private val tmdbDataSource: TmdbDataSource) : MovieCandidateSearch {
 
     override suspend fun candidates(movie: ImportedMovie): List<MovieCandidate> {
-        val queries = listOfNotNull(movie.originalTitle, movie.title).distinct()
+        val queries = listOfNotNull(movie.originalTitle, movie.title, movie.localTitle).filter { it.isNotBlank() }.distinct()
         val results = queries.flatMap { query ->
             val byYear = movie.year?.let { tmdbDataSource.searchMovies(query, 1, year = it).results }.orEmpty()
             byYear.ifEmpty { tmdbDataSource.searchMovies(query, 1).results }

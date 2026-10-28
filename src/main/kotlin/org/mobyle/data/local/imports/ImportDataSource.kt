@@ -38,6 +38,8 @@ import org.mobyle.domain.model.ImportPreview
 import org.mobyle.domain.model.ImportedList
 import org.mobyle.domain.model.ImportedMovie
 import org.mobyle.domain.model.Movie
+import org.mobyle.domain.model.vocabulary.MovieMatchMethod
+import org.mobyle.domain.model.vocabulary.MovieMatchStatus
 import org.mobyle.domain.model.MovieCandidate
 import org.mobyle.domain.model.Page
 import org.mobyle.domain.model.PageRequest
@@ -298,6 +300,7 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
                 tmdbId = movie.tmdbId,
                 title = movie.title,
                 originalTitle = movie.originalTitle,
+                localTitle = movie.localTitle,
                 overview = movie.overview.orEmpty(),
                 posterPath = movie.posterUrl,
                 releaseDate = movie.releaseDate ?: movie.year?.toString()
@@ -311,8 +314,16 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
             catalog.resolveScrapedMovie(id, movie.tmdbId, filmowId)
             id = MoviesTable.select(MoviesTable.id).where { MoviesTable.tmdbId eq movie.tmdbId }.first()[MoviesTable.id].value
         }
+        if (movie.tmdbId != null) {
+            catalog.markMatched(movie.tmdbId, MovieMatchMethod.fromWireValue(movie.matchMethod) ?: MovieMatchMethod.TITLE)
+        }
         if (movie.imdbUrl != null || movie.runtime != null || movie.director != null || movie.genres.isNotEmpty()) {
             MoviesTable.update({ MoviesTable.id eq id }) { row ->
+                // New source data gives an unmatched placeholder another chance in the queue.
+                if (currentTmdbId == null && movie.tmdbId == null) {
+                    row[matchStatus] = MovieMatchStatus.PENDING.wireValue
+                    row[needsEnrichment] = true
+                }
                 movie.imdbUrl?.let { row[imdbUrl] = it }
                 movie.runtime?.let { row[runtime] = it }
                 movie.director?.let { row[director] = it }
@@ -501,6 +512,7 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
             ?.get(MoviesTable.id)?.value
             ?: catalog.upsertMovie(Movie(tmdbId = tmdbId, title = title))
         MoviesTable.update({ MoviesTable.id eq movieDbId }) { it[needsEnrichment] = true }
+        catalog.markMatched(tmdbId, MovieMatchMethod.MANUAL)
         ImportUnmatchedTable.update({ ImportUnmatchedTable.id eq item.id }) {
             it[resolution] = RESOLUTION_MATCHED
             it[movieId] = movieDbId

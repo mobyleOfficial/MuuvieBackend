@@ -162,3 +162,20 @@ data class TmdbLanguage(
 data class TmdbFindResponse(
     @SerialName("movie_results") val movieResults: List<TmdbMovieResponse> = emptyList()
 )
+
+/** movie/{id} in English with credits and alternative titles, to confirm a match by director. */
+@Serializable
+data class TmdbMovieFactsResponse(
+    val id: Int,
+    val title: String? = null,
+    @SerialName("original_title") val originalTitle: String? = null,
+    @SerialName("release_date") val releaseDate: String? = null,
+    val credits: TmdbCredits? = null,
+    @SerialName("alternative_titles") val alternativeTitles: TmdbAlternativeTitles? = null
+)
+
+@Serializable
+data class TmdbAlternativeTitles(val titles: List<TmdbAlternativeTitle> = emptyList())
+
+@Serializable
+data class TmdbAlternativeTitle(val title: String? = null)

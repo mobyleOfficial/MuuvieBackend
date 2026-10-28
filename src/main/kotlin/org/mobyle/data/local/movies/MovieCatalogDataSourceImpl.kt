@@ -7,6 +7,9 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.mobyle.data.local.database.*
 import org.mobyle.data.remote.tmdb.model.TmdbCredits
 import org.mobyle.domain.model.*
+import org.mobyle.domain.model.vocabulary.MovieMatchMethod
+import org.mobyle.domain.model.vocabulary.MovieMatchStatus
+import kotlin.time.Duration.Companion.minutes
 import org.slf4j.LoggerFactory
 
 private val catalogLog = LoggerFactory.getLogger(MovieCatalogDataSourceImpl::class.java)
@@ -107,6 +110,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                     it[MoviesTable.filmowId] = filmowId
                     it[MoviesTable.letterboxdId] = letterboxdId
                     it[needsEnrichment] = true
+                    if (movie.tmdbId != null) {
+                        it[matchStatus] = MovieMatchStatus.MATCHED.wireValue
+                        it[matchMethod] = MovieMatchMethod.TMDB.wireValue
+                    }
                 }.value
             }
         }
@@ -132,6 +139,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 it[enrichedAt] = Clock.System.now()
                 it[needsEnrichment] = false
                 if (detail.trailerKey != null) it[trailerKey] = detail.trailerKey
+                it[matchStatus] = MovieMatchStatus.MATCHED.wireValue
+                if (movieRow[MoviesTable.matchMethod] == null) it[matchMethod] = MovieMatchMethod.TMDB.wireValue
+                it[enrichmentAttempts] = 0
+                it[enrichmentRetryAt] = null
             }
 
             syncGenres(movieDbId, detail.genres)
@@ -267,24 +278,100 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
     override fun getMoviesNeedingEnrichment(limit: Int): List<EnrichmentCandidate> {
         return transaction {
+            val now = Clock.System.now()
             MoviesTable.selectAll()
-                .where { MoviesTable.needsEnrichment eq true }
-                .orderBy(MoviesTable.id, SortOrder.ASC)
-                .limit(limit)
-                .map { row ->
-                    val tmdbId = row[MoviesTable.tmdbId]
-                    EnrichmentCandidate(
-                        dbId = row[MoviesTable.id].value,
-                        tmdbId = tmdbId,
-                        title = row[MoviesTable.title],
-                        originalTitle = row[MoviesTable.originalTitle],
-                        localTitle = row[MoviesTable.localTitle],
-                        year = row[MoviesTable.year],
-                        filmowId = row[MoviesTable.filmowId],
-                        imdbUrl = row[MoviesTable.imdbUrl],
-                        needsResolution = tmdbId == null
-                    )
+                .where {
+                    (MoviesTable.needsEnrichment eq true) and
+                        (MoviesTable.matchStatus neq MovieMatchStatus.UNMATCHED.wireValue) and
+                        (MoviesTable.enrichmentRetryAt.isNull() or (MoviesTable.enrichmentRetryAt lessEq now))
                 }
+                // Fresh movies first: the ones that keep failing wait behind them.
+                .orderBy(MoviesTable.enrichmentAttempts to SortOrder.ASC, MoviesTable.id to SortOrder.ASC)
+                .limit(limit)
+                .map(::rowToEnrichmentCandidate)
+        }
+    }
+
+    override fun getEnrichmentCandidates(dbIds: Collection<Long>): List<EnrichmentCandidate> {
+        if (dbIds.isEmpty()) return emptyList()
+        return transaction {
+            dbIds.distinct().chunked(QUERY_CHUNK).flatMap { chunk ->
+                MoviesTable.selectAll()
+                    .where { MoviesTable.id inList chunk }
+                    .orderBy(MoviesTable.id, SortOrder.ASC)
+                    .map(::rowToEnrichmentCandidate)
+            }
+        }
+    }
+
+    private fun rowToEnrichmentCandidate(row: ResultRow): EnrichmentCandidate {
+        val tmdbId = row[MoviesTable.tmdbId]
+        return EnrichmentCandidate(
+            dbId = row[MoviesTable.id].value,
+            tmdbId = tmdbId,
+            title = row[MoviesTable.title],
+            originalTitle = row[MoviesTable.originalTitle],
+            localTitle = row[MoviesTable.localTitle],
+            year = row[MoviesTable.year],
+            filmowId = row[MoviesTable.filmowId],
+            imdbUrl = row[MoviesTable.imdbUrl],
+            director = row[MoviesTable.director],
+            needsResolution = tmdbId == null,
+            needsEnrichment = row[MoviesTable.needsEnrichment],
+            unmatched = row[MoviesTable.matchStatus] == MovieMatchStatus.UNMATCHED.wireValue
+        )
+    }
+
+    override fun markMatched(tmdbId: Int, method: MovieMatchMethod) {
+        transaction {
+            MoviesTable.update({ MoviesTable.tmdbId eq tmdbId }) {
+                it[matchStatus] = MovieMatchStatus.MATCHED.wireValue
+                it[matchMethod] = method.wireValue
+                it[enrichmentAttempts] = 0
+                it[enrichmentRetryAt] = null
+            }
+        }
+    }
+
+    override fun markUnmatched(dbId: Long) {
+        transaction {
+            MoviesTable.update({ (MoviesTable.id eq dbId) and MoviesTable.tmdbId.isNull() }) {
+                it[matchStatus] = MovieMatchStatus.UNMATCHED.wireValue
+                it[needsEnrichment] = false
+            }
+        }
+    }
+
+    override fun markEnrichmentFailed(dbId: Long) {
+        transaction {
+            val attempts = MoviesTable.select(MoviesTable.enrichmentAttempts)
+                .where { MoviesTable.id eq dbId }
+                .firstOrNull()?.get(MoviesTable.enrichmentAttempts) ?: return@transaction
+            val next = attempts + 1
+            MoviesTable.update({ MoviesTable.id eq dbId }) {
+                it[enrichmentAttempts] = next
+                it[enrichmentRetryAt] = Clock.System.now() + retryDelay(next)
+            }
+        }
+    }
+
+    override fun getResolvableFilmowIds(): Set<String> {
+        return transaction {
+            MoviesTable.select(MoviesTable.filmowId)
+                .where { MoviesTable.filmowId.isNotNull() and (MoviesTable.tmdbId.isNotNull() or MoviesTable.imdbUrl.isNotNull()) }
+                .mapNotNull { it[MoviesTable.filmowId] }
+                .toSet()
+        }
+    }
+
+    override fun findDbIdsByFilmowIds(filmowIds: Collection<String>): List<Long> {
+        if (filmowIds.isEmpty()) return emptyList()
+        return transaction {
+            filmowIds.distinct().chunked(QUERY_CHUNK).flatMap { chunk ->
+                MoviesTable.select(MoviesTable.id)
+                    .where { MoviesTable.filmowId inList chunk }
+                    .map { it[MoviesTable.id].value }
+            }
         }
     }
 
@@ -755,7 +842,8 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 cast = cast,
                 trailerKey = row[MoviesTable.trailerKey],
                 watchProviders = providers,
-                similarMovies = similars
+                similarMovies = similars,
+                matchStatus = MovieMatchStatus.fromWireValue(row[MoviesTable.matchStatus]) ?: MovieMatchStatus.PENDING
             )
         }
     }
@@ -787,5 +875,13 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             releaseDate = row[MoviesTable.releaseDate] ?: row[MoviesTable.year]?.toString(),
             filmowId = row[MoviesTable.filmowId]
         )
+    }
+
+    private companion object {
+        const val QUERY_CHUNK = 500
+        val MAX_RETRY_DELAY = (24 * 60).minutes
+
+        /** 2, 4, 8... minutes after each failure, up to a day. */
+        fun retryDelay(attempts: Int) = (1L shl attempts.coerceIn(1, 11)).minutes.coerceAtMost(MAX_RETRY_DELAY)
     }
 }

@@ -61,7 +61,22 @@ class MoviesRepositoryImpl(
             if (local != null) return local.copy(id = localMovie.id)
         }
 
-        // 3. Not enriched locally — fetch from TMDB
+        // 3. A placeholder without TMDB id (e.g. from Filmow): resolve and enrich it now
+        // (filmow-movie-enrichment). When nothing matches with confidence, the scraped data
+        // is returned with matchStatus = unmatched instead of guessing a movie.
+        if (localMovie != null && localMovie.tmdbId == null && tmdbId == null) {
+            enrichmentService.resolveNow(localMovie.id)
+            // The placeholder may have been merged into the catalog movie with that TMDB id.
+            val resolved = localMovie.filmowId?.let { movieCatalogDataSource.findByFilmowId(it) }
+                ?: movieCatalogDataSource.findById(localMovie.id)
+            val resolvedTmdbId = resolved?.tmdbId
+            if (resolved != null && resolvedTmdbId != null) {
+                movieCatalogDataSource.getLocalMovieDetail(resolvedTmdbId)?.let { return it.copy(id = resolved.id) }
+            }
+            return movieCatalogDataSource.getLocalMovieDetailByDbId(resolved?.id ?: localMovie.id)
+        }
+
+        // 4. Not enriched locally — fetch from TMDB
         val fetchTmdbId = tmdbId ?: localMovie?.tmdbId
         if (fetchTmdbId != null) {
             val detail = try {
@@ -77,38 +92,8 @@ class MoviesRepositoryImpl(
             }
         }
 
-        // 4. Found in DB — try title search on TMDB as fallback
-        if (localMovie != null) {
-            val titleMatch = try {
-                val title = localMovie.title
-                if (title.isNotBlank()) {
-                    val searchResult = tmdbDataSource.searchMovies(title, page = 1)
-                    val match = searchResult.results.firstOrNull { it.title.equals(title, ignoreCase = true) }
-                        ?: searchResult.results.firstOrNull()
-                    if (match != null) {
-                        val detail = fetchAndCacheDetail(match.id)
-                        movieCatalogDataSource.resolveScrapedMovie(
-                            oldDbId = localMovie.id,
-                            realTmdbId = match.id,
-                            filmowId = localMovie.filmowId
-                        )
-                        detail.copy(id = localMovie.id)
-                    } else null
-                } else null
-            } catch (e: Exception) {
-                log.warn("TMDB title search fallback failed for '${localMovie.title}': ${e.message}")
-                null
-            }
-
-            if (titleMatch != null) {
-                return titleMatch
-            }
-
-            // 5. No TMDB match — return scraped local data directly.
-            return movieCatalogDataSource.getLocalMovieDetailByDbId(localMovie.id)
-        }
-
-        return null
+        // 5. TMDB unavailable — return the local data we have.
+        return localMovie?.let { movieCatalogDataSource.getLocalMovieDetailByDbId(it.id) }
     }
 
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {

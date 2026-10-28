@@ -2,6 +2,7 @@ package org.mobyle.domain.model
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import org.mobyle.domain.model.vocabulary.MovieMatchStatus
 
 @Serializable
 data class MovieDetail(
@@ -26,5 +27,7 @@ data class MovieDetail(
     val watchProviders: List<WatchProvider> = emptyList(),
     val similarMovies: List<Movie> = emptyList(),
     // The viewer's state for the movie (F2.7); only on authenticated requests.
-    val me: MovieUserState? = null
+    val me: MovieUserState? = null,
+    // Whether the movie is linked to TMDB; unmatched movies only have the source's data.
+    val matchStatus: MovieMatchStatus = MovieMatchStatus.MATCHED
 )

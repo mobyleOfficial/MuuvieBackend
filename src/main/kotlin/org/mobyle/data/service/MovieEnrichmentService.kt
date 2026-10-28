@@ -5,14 +5,29 @@ import org.mobyle.data.local.movies.EnrichmentCandidate
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.remote.tmdb.toDomain
+import org.mobyle.domain.model.ImportedMovie
+import org.mobyle.domain.model.MovieResolution
+import org.mobyle.domain.model.vocabulary.ImportSource
+import org.mobyle.domain.model.vocabulary.MovieMatchStatus
+import org.mobyle.domain.repository.MovieResolver
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Links catalog movies to TMDB and copies the TMDB data into the catalog
+ * (filmow-movie-enrichment). Three triggers share [process]: the detail screen ([resolveNow]),
+ * the end of an import ([enrichImported]) and the background loop ([processBatch]).
+ */
 class MovieEnrichmentService(
     private val catalogDataSource: MovieCatalogDataSource,
-    private val tmdbDataSource: TmdbDataSource
+    private val tmdbDataSource: TmdbDataSource,
+    private val resolver: MovieResolver
 ) {
     private val log = LoggerFactory.getLogger(MovieEnrichmentService::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Movies being processed, so two triggers never resolve the same movie at once.
+    private val inFlight = ConcurrentHashMap.newKeySet<Long>()
 
     companion object {
         private const val BATCH_SIZE = 50
@@ -23,54 +38,79 @@ class MovieEnrichmentService(
         val candidates = catalogDataSource.getMoviesNeedingEnrichment(BATCH_SIZE)
         if (candidates.isEmpty()) return 0
 
-        var enriched = 0
-        for (candidate in candidates) {
-            try {
-                if (candidate.needsResolution) {
-                    resolveAndEnrich(candidate)
-                } else {
-                    enrichFromTmdb(candidate.tmdbId!!)
-                }
-                enriched++
-                delay(DELAY_BETWEEN_CALLS_MS)
-            } catch (e: Exception) {
-                log.warn("Failed to enrich movie ${candidate.tmdbId} '${candidate.title}': ${e.message}")
-            }
+        val results = candidates.map { candidate ->
+            process(candidate).also { delay(DELAY_BETWEEN_CALLS_MS) }
         }
-        log.info("[ENRICHMENT] Enriched $enriched / ${candidates.size} movies")
-        return enriched
+        log.info(
+            "[ENRICHMENT] Batch of ${candidates.size}: " +
+                "matched=${results.count { it == MovieMatchStatus.MATCHED }}, " +
+                "unmatched=${results.count { it == MovieMatchStatus.UNMATCHED }}, " +
+                "retry later=${results.count { it == MovieMatchStatus.PENDING }}"
+        )
+        return candidates.size
     }
 
     suspend fun enrichOnDemand(tmdbId: Int) {
         enrichFromTmdb(tmdbId)
     }
 
-    private suspend fun resolveAndEnrich(candidate: EnrichmentCandidate) {
-        val imdbId = extractImdbId(candidate.imdbUrl)
-        if (imdbId == null) {
-            log.info("[ENRICHMENT] No IMDb ID for '${candidate.title}' (filmowId=${candidate.filmowId}) — skipping resolution")
-            return
-        }
-
-        val tmdbId = tmdbDataSource.findByImdbId(imdbId).movieResults.firstOrNull()?.id
-        if (tmdbId == null) {
-            log.warn("[ENRICHMENT] TMDB has no match for IMDb ID $imdbId ('${candidate.title}')")
-            return
-        }
-
-        catalogDataSource.resolveScrapedMovie(
-            oldDbId = candidate.dbId,
-            realTmdbId = tmdbId,
-            filmowId = candidate.filmowId
-        )
-
-        enrichFromTmdb(tmdbId)
+    /** Resolves and enriches one movie right away (the user opened it). */
+    suspend fun resolveNow(dbId: Long): MovieMatchStatus {
+        val candidate = catalogDataSource.getEnrichmentCandidates(listOf(dbId)).firstOrNull()
+            ?: return MovieMatchStatus.PENDING
+        // Already tried without a confident match: opening it again does not search again.
+        if (candidate.unmatched) return MovieMatchStatus.UNMATCHED
+        return process(candidate)
     }
 
-    private fun extractImdbId(imdbUrl: String?): String? {
-        if (imdbUrl.isNullOrBlank()) return null
-        // Matches tt followed by digits anywhere in the URL, e.g. https://www.imdb.com/title/tt0118694/
-        return Regex("(tt\\d+)").find(imdbUrl)?.value
+    /** The movies of an import, ahead of the background loop. */
+    fun enrichImported(source: ImportSource, externalIds: Collection<String>) {
+        if (source != ImportSource.FILMOW || externalIds.isEmpty()) return
+        scope.launch {
+            val dbIds = catalogDataSource.findDbIdsByFilmowIds(externalIds)
+            val pending = catalogDataSource.getEnrichmentCandidates(dbIds).filter { it.needsEnrichment && !it.unmatched }
+            log.info("[ENRICHMENT] Import: ${pending.size} of ${dbIds.size} movies to enrich")
+            for (candidate in pending) {
+                process(candidate)
+                delay(DELAY_BETWEEN_CALLS_MS)
+            }
+        }
+    }
+
+    private suspend fun process(candidate: EnrichmentCandidate): MovieMatchStatus {
+        if (!inFlight.add(candidate.dbId)) return MovieMatchStatus.PENDING
+        return try {
+            val tmdbId = candidate.tmdbId
+            if (tmdbId != null) {
+                enrichFromTmdb(tmdbId)
+                return MovieMatchStatus.MATCHED
+            }
+            when (val resolution = resolver.resolve(candidate.toImportedMovie())) {
+                is MovieResolution.Matched -> {
+                    catalogDataSource.resolveScrapedMovie(candidate.dbId, resolution.tmdbId, candidate.filmowId)
+                    catalogDataSource.markMatched(resolution.tmdbId, resolution.method)
+                    log.info("[ENRICHMENT] '${candidate.title}' matched by ${resolution.method.wireValue} -> tmdb ${resolution.tmdbId}")
+                    enrichFromTmdb(resolution.tmdbId)
+                    MovieMatchStatus.MATCHED
+                }
+                is MovieResolution.Unmatched -> {
+                    catalogDataSource.markUnmatched(candidate.dbId)
+                    log.info(
+                        "[ENRICHMENT] '${candidate.title}' (${candidate.year ?: "?"}, filmowId=${candidate.filmowId}) " +
+                            "unmatched; ${resolution.candidates.size} candidates"
+                    )
+                    MovieMatchStatus.UNMATCHED
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("[ENRICHMENT] Failed for movie ${candidate.dbId} '${candidate.title}': ${e.message}")
+            catalogDataSource.markEnrichmentFailed(candidate.dbId)
+            MovieMatchStatus.PENDING
+        } finally {
+            inFlight.remove(candidate.dbId)
+        }
     }
 
     private suspend fun enrichFromTmdb(tmdbId: Int) {
@@ -106,3 +146,13 @@ class MovieEnrichmentService(
         }
     }
 }
+
+private fun EnrichmentCandidate.toImportedMovie() = ImportedMovie(
+    externalId = filmowId ?: "db:$dbId",
+    title = title,
+    originalTitle = originalTitle,
+    localTitle = localTitle,
+    year = year,
+    director = director,
+    imdbUrl = imdbUrl
+)
