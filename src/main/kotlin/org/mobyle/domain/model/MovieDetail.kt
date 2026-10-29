@@ -14,6 +14,8 @@ data class MovieDetail(
     val overview: String,
     // ISO 639-1 of the overview when it is not in Portuguese (TMDB had no pt-BR one); null otherwise.
     val overviewLanguage: String? = null,
+    // True when the overview was machine translated into Portuguese (DeepL).
+    val overviewTranslated: Boolean = false,
     val posterPath: String? = null,
     val backdropPath: String? = null,
     // Kept for the catalog cache only; the TMDB score is not shown (D3, phase 13).

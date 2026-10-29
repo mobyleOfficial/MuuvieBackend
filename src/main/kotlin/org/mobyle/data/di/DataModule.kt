@@ -32,6 +32,9 @@ import org.mobyle.data.local.watch.WatchDataSource
 import org.mobyle.data.local.watch.WatchDataSourceImpl
 import org.mobyle.data.remote.gifs.GifDataSource
 import org.mobyle.data.remote.gifs.TenorGifDataSource
+import org.mobyle.data.remote.translation.DeepLTranslationDataSource
+import org.mobyle.data.remote.translation.TranslationDataSource
+import org.mobyle.data.service.OverviewTranslator
 import org.mobyle.data.repository.CommentThreadRepositoryImpl
 import org.mobyle.data.repository.GifRepositoryImpl
 import org.mobyle.data.repository.WatchRepositoryImpl
@@ -173,11 +176,27 @@ val dataModule = module {
         TmdbMovieResolver(tmdbDataSource = get(), candidateSearch = TmdbMovieCandidateSearch(tmdbDataSource = get()))
     }
 
+    // Overviews TMDB only has in another language stay untranslated until DEEPL_API_KEY is set.
+    System.getenv("DEEPL_API_KEY")?.takeIf { it.isNotBlank() }?.let { apiKey ->
+        single<TranslationDataSource> {
+            val translationHttpClient = HttpClient(CIO) {
+                // Non-2xx (e.g. an invalid key or the quota spent) throws; the overview stays as it is.
+                expectSuccess = true
+                install(HttpTimeout) { requestTimeoutMillis = 10_000 }
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            DeepLTranslationDataSource(httpClient = translationHttpClient, apiKey = apiKey)
+        }
+    }
+
+    single { OverviewTranslator(translationDataSource = getOrNull(), catalogDataSource = get()) }
+
     single<MovieEnrichmentService> {
         MovieEnrichmentService(
             catalogDataSource = get(),
             tmdbDataSource = get(),
-            resolver = get()
+            resolver = get(),
+            overviewTranslator = get()
         )
     }
 
@@ -191,7 +210,8 @@ val dataModule = module {
                 tmdbDataSource = get(),
                 movieCatalogDataSource = get(),
                 enrichmentService = get(),
-                personDataSource = get()
+                personDataSource = get(),
+                overviewTranslator = get()
             )
         } catch (e: Exception) {
             throw IllegalStateException("Failed to create MoviesRepositoryImpl: ${e.message}", e)

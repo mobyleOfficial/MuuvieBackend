@@ -14,6 +14,14 @@ import org.slf4j.LoggerFactory
 
 private val catalogLog = LoggerFactory.getLogger(MovieCatalogDataSourceImpl::class.java)
 
+/** How good an overview is: Portuguese (TMDB, Filmow), then machine translated, then another language. */
+private fun overviewRank(overview: String?, language: String?, translated: Boolean): Int = when {
+    overview.isNullOrBlank() -> 0
+    language != null -> 1
+    translated -> 2
+    else -> 3
+}
+
 class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
     override fun findById(id: Long): Movie? {
@@ -88,6 +96,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                     if (movie.overview.isNotBlank()) {
                         it[overview] = movie.overview
                         it[overviewLanguage] = null
+                        it[overviewTranslated] = false
                     }
                     if (movie.posterPath != null) it[posterPath] = movie.posterPath
                     if (movie.backdropPath != null) it[backdropPath] = movie.backdropPath
@@ -123,6 +132,12 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
         }
     }
 
+    override fun hasPortugueseOverview(tmdbId: Int): Boolean = transaction {
+        val row = MoviesTable.selectAll().where { MoviesTable.tmdbId eq tmdbId }.firstOrNull()
+            ?: return@transaction false
+        overviewRank(row[MoviesTable.overview], row[MoviesTable.overviewLanguage], row[MoviesTable.overviewTranslated]) >= 2
+    }
+
     override fun enrichMovie(tmdbId: Int, detail: MovieDetail, credits: TmdbCredits?) {
         transaction {
             val movieRow = MoviesTable.selectAll()
@@ -130,15 +145,20 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .firstOrNull() ?: return@transaction
 
             val movieDbId = movieRow[MoviesTable.id].value
-            // An overview in another language never replaces a Portuguese one already kept.
-            val keepsPortuguese = detail.overviewLanguage != null &&
-                !movieRow[MoviesTable.overview].isNullOrBlank() &&
-                movieRow[MoviesTable.overviewLanguage] == null
+            // A new overview never replaces a better one already kept.
+            val replacesOverview = detail.overview.isNotBlank() &&
+                overviewRank(detail.overview, detail.overviewLanguage, detail.overviewTranslated) >=
+                overviewRank(
+                    movieRow[MoviesTable.overview],
+                    movieRow[MoviesTable.overviewLanguage],
+                    movieRow[MoviesTable.overviewTranslated]
+                )
 
             MoviesTable.update({ MoviesTable.tmdbId eq tmdbId }) {
-                if (detail.overview.isNotBlank() && !keepsPortuguese) {
+                if (replacesOverview) {
                     it[overview] = detail.overview
                     it[overviewLanguage] = detail.overviewLanguage
+                    it[overviewTranslated] = detail.overviewTranslated
                 }
                 it[backdropPath] = detail.backdropPath
                 it[releaseDate] = detail.releaseDate
@@ -458,6 +478,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 originalTitle = row[MoviesTable.originalTitle],
                 overview = row[MoviesTable.overview] ?: "",
                 overviewLanguage = row[MoviesTable.overviewLanguage],
+                overviewTranslated = row[MoviesTable.overviewTranslated],
                 posterPath = row[MoviesTable.posterPath],
                 backdropPath = row[MoviesTable.backdropPath],
                 voteAverage = row[MoviesTable.voteAverage]?.toDouble() ?: 0.0,
@@ -598,6 +619,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                         if (movie.overview.isNotBlank()) {
                             it[overview] = movie.overview
                             it[overviewLanguage] = null
+                            it[overviewTranslated] = false
                         }
                     }
                     id
@@ -846,6 +868,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 originalTitle = row[MoviesTable.originalTitle],
                 overview = row[MoviesTable.overview] ?: "",
                 overviewLanguage = row[MoviesTable.overviewLanguage],
+                overviewTranslated = row[MoviesTable.overviewTranslated],
                 posterPath = row[MoviesTable.posterPath],
                 backdropPath = row[MoviesTable.backdropPath],
                 voteAverage = row[MoviesTable.voteAverage]?.toDouble() ?: 0.0,

@@ -21,7 +21,8 @@ import java.util.concurrent.ConcurrentHashMap
 class MovieEnrichmentService(
     private val catalogDataSource: MovieCatalogDataSource,
     private val tmdbDataSource: TmdbDataSource,
-    private val resolver: MovieResolver
+    private val resolver: MovieResolver,
+    private val overviewTranslator: OverviewTranslator
 ) {
     private val log = LoggerFactory.getLogger(MovieEnrichmentService::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -115,7 +116,7 @@ class MovieEnrichmentService(
 
     private suspend fun enrichFromTmdb(tmdbId: Int) {
         val detailResponse = tmdbDataSource.getMovieDetail(tmdbId)
-        val detail = detailResponse.toDomain()
+        val detail = overviewTranslator.portuguese(tmdbId, detailResponse.toDomain())
         catalogDataSource.enrichMovie(tmdbId, detail, detailResponse.credits)
         catalogDataSource.saveMovieFacts(
             tmdbId,

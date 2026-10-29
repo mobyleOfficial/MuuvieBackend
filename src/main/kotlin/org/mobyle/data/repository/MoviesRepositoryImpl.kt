@@ -9,6 +9,7 @@ import org.mobyle.data.local.movies.PersonDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.remote.tmdb.toDomain
 import org.mobyle.data.service.MovieEnrichmentService
+import org.mobyle.data.service.OverviewTranslator
 import org.mobyle.domain.model.*
 import org.mobyle.domain.repository.MoviesRepository
 import org.mobyle.model.MovieListing
@@ -18,7 +19,8 @@ class MoviesRepositoryImpl(
     private val tmdbDataSource: TmdbDataSource,
     private val movieCatalogDataSource: MovieCatalogDataSource,
     private val enrichmentService: MovieEnrichmentService,
-    private val personDataSource: PersonDataSource
+    private val personDataSource: PersonDataSource,
+    private val overviewTranslator: OverviewTranslator
 ) : MoviesRepository {
 
     private val log = LoggerFactory.getLogger(MoviesRepositoryImpl::class.java)
@@ -126,7 +128,12 @@ class MoviesRepositoryImpl(
             )
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    movieCatalogDataSource.enrichMovie(tmdbId, detail, response.credits)
+                    // Translated off the request: this response still shows the overview TMDB had.
+                    movieCatalogDataSource.enrichMovie(
+                        tmdbId,
+                        overviewTranslator.portuguese(tmdbId, detail),
+                        response.credits
+                    )
                     movieCatalogDataSource.saveSimilarMovies(tmdbId, similarsWithIds)
                     movieCatalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
                 } catch (e: Exception) {

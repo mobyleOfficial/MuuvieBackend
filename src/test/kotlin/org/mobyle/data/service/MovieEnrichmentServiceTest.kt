@@ -28,7 +28,7 @@ class MovieEnrichmentServiceTest {
     private val catalog = MovieCatalogDataSourceImpl()
     private val tmdb = mockk<TmdbDataSource>()
     private val resolver = mockk<MovieResolver>()
-    private val service = MovieEnrichmentService(catalog, tmdb, resolver)
+    private val service = MovieEnrichmentService(catalog, tmdb, resolver, OverviewTranslator(null, catalog))
 
     @BeforeTest
     fun setUp() {
