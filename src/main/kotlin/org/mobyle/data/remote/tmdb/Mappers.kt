@@ -74,11 +74,16 @@ fun TmdbMovieDetailResponse.toDomain(): MovieDetail {
         ?.map { WatchProvider(name = it.providerName ?: "", logoPath = it.logoPath) }
         ?: emptyList()
 
+    // TMDB leaves the overview empty when it has no pt-BR translation: another Portuguese one,
+    // or else the English one, fills it, with its language so the app can say so.
+    val fallback = if (overview.isNullOrBlank()) fallbackOverview() else null
+
     return MovieDetail(
         tmdbId = id,
         title = title ?: "",
         originalTitle = originalTitle,
-        overview = overview ?: "",
+        overview = overview?.takeIf { it.isNotBlank() } ?: fallback?.second ?: "",
+        overviewLanguage = fallback?.first?.takeIf { it != "pt" },
         posterPath = posterPath,
         backdropPath = backdropPath,
         voteAverage = voteAverage ?: 0.0,
@@ -93,6 +98,22 @@ fun TmdbMovieDetailResponse.toDomain(): MovieDetail {
         watchProviders = providers,
         similarMovies = similar?.results?.take(10)?.map { it.toDomain() } ?: emptyList()
     )
+}
+
+/** Languages tried, in order, when the pt-BR overview is empty. */
+private val OVERVIEW_FALLBACK_LANGUAGES = listOf("pt", "en")
+
+/** The first overview found in [OVERVIEW_FALLBACK_LANGUAGES], with its ISO 639-1 language. */
+private fun TmdbMovieDetailResponse.fallbackOverview(): Pair<String, String>? {
+    val overviews = translations?.translations.orEmpty()
+        // en-US first among the English ones.
+        .sortedByDescending { it.country == "US" }
+        .mapNotNull { translation ->
+            translation.data?.overview?.takeIf { it.isNotBlank() }?.let { translation.language to it }
+        }
+    return OVERVIEW_FALLBACK_LANGUAGES.firstNotNullOfOrNull { language ->
+        overviews.firstOrNull { it.first == language }?.let { language to it.second }
+    }
 }
 
 fun TmdbGenre.toDomain(): Genre {

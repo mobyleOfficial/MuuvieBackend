@@ -121,7 +121,7 @@ All routes are served under `/api/v1` (contract: `research/decisions/api-v1-cont
 | GET    | `/movies/languages`           | List languages; `name` is the endonym ("Français"), `englishName` kept | —                                                                      |
 
 With a token, `/movies/trending`, `/movies/search`, `/movies/discover` and the `/discover/movies/*` rankings carry `me: { status, rating }` on each movie the viewer has on Já assisti / Quero ver or rated; the field is absent otherwise.
-| GET    | `/movies/{id}`                | Movie details (TMDB id), without the TMDB score. With a token it carries `me`: shelves, situation (`watched`/`want_to_watch`), progress, rating | —                     |
+| GET    | `/movies/{id}`                | Movie details (TMDB id), without the TMDB score. With a token it carries `me`: shelves, situation (`watched`/`want_to_watch`), progress, rating. Without a pt-BR overview on TMDB, another Portuguese one or else the English one fills it, with `overviewLanguage` (ISO 639-1, e.g. `en`; absent for Portuguese) | —                     |
 | GET    | `/movies`                     | Movie details by `id` (database), `tmdbId` or `filmowId`. An imported movie without TMDB id is resolved and enriched on the spot; `matchStatus` is `matched`, `pending` or `unmatched` (only the source's data) | `id`, `tmdbId`, `filmowId` |
 | GET    | `/persons/{id}`, `/persons/tmdb/{tmdbId}` | Person with the catalog movies they are in (database or TMDB id) | —                                                                                                  |
 

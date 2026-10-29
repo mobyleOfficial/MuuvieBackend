@@ -48,6 +48,7 @@ object MoviesTable : LongIdTable("movies") {
     val voteAverage = float("vote_average").nullable()
     val filmowId = varchar("filmow_id", 50).nullable().index("idx_movies_filmow_id")
     val overview = text("overview").nullable()
+    val overviewLanguage = varchar("overview_language", 10).nullable() // ISO 639-1; null is Portuguese
     val backdropPath = varchar("backdrop_path", 500).nullable()
     val releaseDate = varchar("release_date", 20).nullable()
     val runtime = integer("runtime").nullable()

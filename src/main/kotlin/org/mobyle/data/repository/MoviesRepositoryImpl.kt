@@ -87,8 +87,13 @@ class MoviesRepositoryImpl(
             }
             if (detail != null) {
                 val dbId = localMovie?.id ?: movieCatalogDataSource.findByTmdbId(fetchTmdbId)?.id ?: detail.id
-                val overview = detail.overview.takeIf { it.isNotBlank() } ?: localMovie?.overview ?: ""
-                return detail.copy(id = dbId, overview = overview)
+                // A Portuguese overview kept locally (pt-BR lists, Filmow) beats TMDB's in another language.
+                val localOverview = localMovie?.overview?.takeIf { it.isNotBlank() }
+                return if (localOverview != null && (detail.overview.isBlank() || detail.overviewLanguage != null)) {
+                    detail.copy(id = dbId, overview = localOverview, overviewLanguage = null)
+                } else {
+                    detail.copy(id = dbId)
+                }
             }
         }
 
@@ -113,7 +118,8 @@ class MoviesRepositoryImpl(
             val id = movieCatalogDataSource.upsertMovie(
                 Movie(
                     tmdbId = tmdbId, title = detail.title, originalTitle = detail.originalTitle,
-                    overview = detail.overview,
+                    // Only a Portuguese overview: enrichMovie keeps one in another language with it.
+                    overview = detail.overview.takeIf { detail.overviewLanguage == null }.orEmpty(),
                     posterPath = detail.posterPath, backdropPath = detail.backdropPath,
                     voteAverage = detail.voteAverage, releaseDate = detail.releaseDate
                 )

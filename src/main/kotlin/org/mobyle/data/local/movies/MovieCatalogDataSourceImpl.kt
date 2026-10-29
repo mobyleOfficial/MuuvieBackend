@@ -84,7 +84,11 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
             if (existing != null) {
                 val dbId = existing[MoviesTable.id].value
                 MoviesTable.update({ MoviesTable.id eq dbId }) {
-                    if (movie.overview.isNotBlank()) it[overview] = movie.overview
+                    // A Movie's overview is always Portuguese (pt-BR lists, Filmow).
+                    if (movie.overview.isNotBlank()) {
+                        it[overview] = movie.overview
+                        it[overviewLanguage] = null
+                    }
                     if (movie.posterPath != null) it[posterPath] = movie.posterPath
                     if (movie.backdropPath != null) it[backdropPath] = movie.backdropPath
                     if (movie.voteAverage > 0.0) it[voteAverage] = movie.voteAverage.toFloat()
@@ -126,9 +130,16 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .firstOrNull() ?: return@transaction
 
             val movieDbId = movieRow[MoviesTable.id].value
+            // An overview in another language never replaces a Portuguese one already kept.
+            val keepsPortuguese = detail.overviewLanguage != null &&
+                !movieRow[MoviesTable.overview].isNullOrBlank() &&
+                movieRow[MoviesTable.overviewLanguage] == null
 
             MoviesTable.update({ MoviesTable.tmdbId eq tmdbId }) {
-                if (detail.overview.isNotBlank()) it[overview] = detail.overview
+                if (detail.overview.isNotBlank() && !keepsPortuguese) {
+                    it[overview] = detail.overview
+                    it[overviewLanguage] = detail.overviewLanguage
+                }
                 it[backdropPath] = detail.backdropPath
                 it[releaseDate] = detail.releaseDate
                 it[runtime] = detail.runtime
@@ -446,6 +457,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 localTitle = row[MoviesTable.localTitle],
                 originalTitle = row[MoviesTable.originalTitle],
                 overview = row[MoviesTable.overview] ?: "",
+                overviewLanguage = row[MoviesTable.overviewLanguage],
                 posterPath = row[MoviesTable.posterPath],
                 backdropPath = row[MoviesTable.backdropPath],
                 voteAverage = row[MoviesTable.voteAverage]?.toDouble() ?: 0.0,
@@ -583,7 +595,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                         if (movie.backdropPath != null) it[backdropPath] = movie.backdropPath
                         if (movie.voteAverage > 0.0) it[voteAverage] = movie.voteAverage.toFloat()
                         if (movie.releaseDate != null) it[releaseDate] = movie.releaseDate
-                        if (movie.overview.isNotBlank()) it[overview] = movie.overview
+                        if (movie.overview.isNotBlank()) {
+                            it[overview] = movie.overview
+                            it[overviewLanguage] = null
+                        }
                     }
                     id
                 } else {
@@ -830,6 +845,7 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 localTitle = row[MoviesTable.localTitle],
                 originalTitle = row[MoviesTable.originalTitle],
                 overview = row[MoviesTable.overview] ?: "",
+                overviewLanguage = row[MoviesTable.overviewLanguage],
                 posterPath = row[MoviesTable.posterPath],
                 backdropPath = row[MoviesTable.backdropPath],
                 voteAverage = row[MoviesTable.voteAverage]?.toDouble() ?: 0.0,

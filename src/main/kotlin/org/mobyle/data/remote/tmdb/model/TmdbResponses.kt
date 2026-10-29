@@ -45,8 +45,23 @@ data class TmdbMovieDetailResponse(
     // Read by the maratona challenges (B7).
     @SerialName("original_language") val originalLanguage: String? = null,
     @SerialName("production_countries") val productionCountries: List<TmdbProductionCountry> = emptyList(),
-    val keywords: TmdbKeywords? = null
+    val keywords: TmdbKeywords? = null,
+    // Every language's overview: the fallback when there is no pt-BR one.
+    val translations: TmdbTranslations? = null
 )
+
+@Serializable
+data class TmdbTranslations(val translations: List<TmdbTranslation> = emptyList())
+
+@Serializable
+data class TmdbTranslation(
+    @SerialName("iso_639_1") val language: String? = null,
+    @SerialName("iso_3166_1") val country: String? = null,
+    val data: TmdbTranslationData? = null
+)
+
+@Serializable
+data class TmdbTranslationData(val overview: String? = null)
 
 @Serializable
 data class TmdbProductionCountry(@SerialName("iso_3166_1") val iso: String? = null)
