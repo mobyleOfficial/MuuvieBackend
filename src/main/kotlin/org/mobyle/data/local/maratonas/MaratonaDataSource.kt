@@ -380,6 +380,13 @@ class MaratonaDataSourceImpl : MaratonaDataSource {
         }
     }
 
+    override fun participantIds(maratonaId: Long): List<String> = transaction {
+        (MaratonaParticipationsTable innerJoin UsersTable).select(UsersTable.externalId)
+            .where { MaratonaParticipationsTable.maratonaId eq maratonaId }
+            .orderBy(MaratonaParticipationsTable.joinedAt to SortOrder.ASC)
+            .map { it[UsersTable.externalId] }
+    }
+
     override fun createdCount(userId: String): Int = transaction {
         val user = userDbIdOf(userId) ?: return@transaction 0
         MaratonasTable.selectAll()

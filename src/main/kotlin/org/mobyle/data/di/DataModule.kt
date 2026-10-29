@@ -330,7 +330,8 @@ val dataModule = module {
             resolver = get(),
             enrichment = get(),
             webSocketManager = get(),
-            activities = get()
+            activities = get(),
+            notifier = get()
         )
     }
 

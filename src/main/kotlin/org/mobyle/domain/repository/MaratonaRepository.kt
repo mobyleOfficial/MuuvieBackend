@@ -74,6 +74,9 @@ interface MaratonaRepository {
     /** Participants of a maratona who reached their level (or the lowest one, without a level). */
     fun finishers(maratonaId: Long): List<Finisher>
 
+    /** External ids of everyone who joined a maratona, for its notifications (B15.1). */
+    fun participantIds(maratonaId: Long): List<String>
+
     /** Maratonas [userId] created and maratonas they take part in, for the profile counters. */
     fun createdCount(userId: String): Int
 
