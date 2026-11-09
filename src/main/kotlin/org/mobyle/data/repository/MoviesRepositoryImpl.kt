@@ -96,6 +96,26 @@ class MoviesRepositoryImpl(
         return localMovie?.let { movieCatalogDataSource.getLocalMovieDetailByDbId(it.id) }
     }
 
+    override suspend fun getSimilarMovies(movieId: Long): List<Movie>? {
+        val movie = movieCatalogDataSource.findById(movieId) ?: return null
+        // A Filmow placeholder not yet matched to TMDB has no similar movies to ask for.
+        val tmdbId = movie.tmdbId ?: return emptyList()
+
+        val similarsCache = movieCatalogDataSource.getSimilarMovies(tmdbId)
+        if (similarsCache.data.isNotEmpty()) {
+            if (similarsCache.isStale) refreshVolatileData(tmdbId)
+            return similarsCache.data
+        }
+
+        // Never fetched (or TMDB lists none): the detail fetch caches the similars with DB ids.
+        return try {
+            fetchAndCacheDetail(tmdbId).similarMovies
+        } catch (e: Exception) {
+            log.warn("TMDB fetch of similar movies failed for tmdbId=$tmdbId: ${e.message}")
+            emptyList()
+        }
+    }
+
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
         if (currentTmdbId == realTmdbId) return
         val dbId = movieCatalogDataSource.getDbIdByFilmowId(filmowId) ?: return

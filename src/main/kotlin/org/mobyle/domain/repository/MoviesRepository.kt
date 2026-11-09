@@ -7,6 +7,11 @@ interface MoviesRepository {
     suspend fun getTrendingMovies(page: Int): MovieListing
     suspend fun getMovieDetail(movieId: Int): MovieDetail
     suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?): MovieDetail?
+    /**
+     * The similar movies of the catalog movie [movieId], from the `movie_similars` cache or TMDB.
+     * Null when no such movie exists; empty when it has no TMDB id or TMDB cannot be reached.
+     */
+    suspend fun getSimilarMovies(movieId: Long): List<Movie>?
     suspend fun searchMovies(query: String, page: Int): MovieListing
     suspend fun discoverMovies(
         page: Int,

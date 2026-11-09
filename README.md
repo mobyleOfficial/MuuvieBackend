@@ -122,6 +122,7 @@ All routes are served under `/api/v1` (contract: `research/decisions/api-v1-cont
 
 With a token, `/movies/trending`, `/movies/search`, `/movies/discover` and the `/discover/movies/*` rankings carry `me: { status, rating }` on each movie the viewer has on Já assisti / Quero ver or rated; the field is absent otherwise.
 | GET    | `/movies/{id}`                | Movie details (TMDB id), without the TMDB score. With a token it carries `me`: shelves, situation (`watched`/`want_to_watch`), progress, rating | —                     |
+| GET    | `/movies/{id}/similar`        | Public. Only the similar movies of a movie by its database id, without the rest of the detail: `{ movieId, results }`. Same source and 7-day cache as `similarMovies` of the detail (up to 10). With a token each movie carries `me`. Empty for an imported movie without TMDB id; 404 for an unknown id | —     |
 | GET    | `/movies`                     | Movie details by `id` (database), `tmdbId` or `filmowId`. An imported movie without TMDB id is resolved and enriched on the spot; `matchStatus` is `matched`, `pending` or `unmatched` (only the source's data) | `id`, `tmdbId`, `filmowId` |
 | GET    | `/persons/{id}`, `/persons/tmdb/{tmdbId}` | Person with the catalog movies they are in (database or TMDB id) | —                                                                                                  |
 

@@ -167,6 +167,7 @@ val appModule = module {
     // Movies use cases
     factory { GetTrendingMovies(repository = get<MoviesRepository>()) }
     factory { LookupMovieDetail(repository = get<MoviesRepository>()) }
+    factory { GetSimilarMovies(repository = get<MoviesRepository>()) }
     factory { SearchMovies(repository = get<MoviesRepository>()) }
     factory { DiscoverMovies(repository = get<MoviesRepository>()) }
     factory { AttachMovieStates(repository = get()) }
