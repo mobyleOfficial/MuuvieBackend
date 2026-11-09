@@ -17,12 +17,15 @@ data class SimilarMovies(
 
 /**
  * How close one similar movie is to the movie that was asked for: [score] from 0 to 1, and the
- * genres and keywords both share, which explain the score.
+ * genres and keywords both share, which explain the score. [genres] are all the genres of the
+ * similar movie itself, so the app can filter the planets of a system by genre; empty while the
+ * movie has not been enriched.
  */
 @Serializable
 data class SimilarityAffinity(
     val movieId: Long,
     val score: Double,
     val sharedGenres: List<String> = emptyList(),
-    val sharedKeywords: List<String> = emptyList()
+    val sharedKeywords: List<String> = emptyList(),
+    val genres: List<String> = emptyList()
 )

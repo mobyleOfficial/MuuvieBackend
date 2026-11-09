@@ -18,6 +18,7 @@ class SimilarityScorerTest {
 
         assertEquals(listOf(0.7, 0.5, 0.3), affinities.map { affinity -> affinity.score })
         assertTrue(affinities.all { affinity -> affinity.sharedGenres.isEmpty() && affinity.sharedKeywords.isEmpty() })
+        assertTrue(affinities.all { affinity -> affinity.genres.isEmpty() })
     }
 
     @Test
@@ -55,6 +56,7 @@ class SimilarityScorerTest {
         // rank 0.7 at weight 0.2, genres 1/2 at weight 0.35, keywords unknown
         assertEquals(0.573, affinity.score)
         assertEquals(listOf("Terror"), affinity.sharedGenres)
+        assertEquals(listOf("Drama", "Terror"), affinity.genres) // all of its own, sorted
     }
 
     @Test

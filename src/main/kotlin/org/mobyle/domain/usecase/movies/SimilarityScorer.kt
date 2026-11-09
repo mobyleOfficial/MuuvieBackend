@@ -45,7 +45,8 @@ object SimilarityScorer {
             movieId = similarMovieId,
             score = roundToThousandths(score),
             sharedGenres = sharedGenres.sorted(),
-            sharedKeywords = sharedKeywords.sorted()
+            sharedKeywords = sharedKeywords.sorted(),
+            genres = similar.genres.sorted()
         )
     }
 
