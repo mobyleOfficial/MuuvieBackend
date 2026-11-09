@@ -3,6 +3,7 @@ package org.mobyle.data.local.movies
 import org.mobyle.domain.model.FilmowMoviePartial
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieDetail
+import org.mobyle.domain.model.MovieTraits
 import org.mobyle.domain.model.WatchProvider
 import org.mobyle.data.remote.tmdb.model.TmdbCredits
 import org.mobyle.domain.model.vocabulary.MovieMatchMethod
@@ -20,6 +21,8 @@ interface MovieCatalogDataSource {
     fun saveSimilarMovies(tmdbId: Int, similars: List<Movie>)
     fun saveWatchProviders(tmdbId: Int, providers: List<WatchProvider>)
     fun getSimilarMovies(tmdbId: Int): CachedData<List<Movie>>
+    /** Genres and keywords of each movie in [dbIds], by DB id; movies with neither are left out. */
+    fun getMovieTraits(dbIds: Collection<Long>): Map<Long, MovieTraits>
     fun getWatchProviders(tmdbId: Int): CachedData<List<WatchProvider>>
     fun resolveScrapedMovie(oldDbId: Long, realTmdbId: Int, filmowId: String?)
     /** The enrichment queue: pending or stale movies, skipping unmatched ones and those in backoff. */

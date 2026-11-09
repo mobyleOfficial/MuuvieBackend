@@ -54,6 +54,7 @@ class MoviesSimilarRoutingTest {
             Result.success(JWTClaims("ana", "ana@example.com", "ana", null, 0, Long.MAX_VALUE))
         coEvery { moviesRepository.getSimilarMovies(1) } returns similarMovies
         coEvery { moviesRepository.getSimilarMovies(404) } returns null
+        coEvery { moviesRepository.getMovieTraits(any()) } returns emptyMap()
 
         startKoin {
             modules(module {
@@ -90,6 +91,9 @@ class MoviesSimilarRoutingTest {
         val results = body["results"]!!.jsonArray
         assertEquals(listOf("Alien", "Aliens"), results.map { it.jsonObject["title"]!!.jsonPrimitive.content })
         assertNoViewerState(results[0])
+        val affinities = body["affinities"]!!.jsonArray
+        assertEquals(listOf(2L, 3L), affinities.map { it.jsonObject["movieId"]!!.jsonPrimitive.long })
+        assertTrue(affinities.all { it.jsonObject["score"]!!.jsonPrimitive.content.toDouble() in 0.0..1.0 })
     }
 
     @Test

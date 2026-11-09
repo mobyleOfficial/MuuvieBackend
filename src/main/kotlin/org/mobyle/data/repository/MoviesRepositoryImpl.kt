@@ -116,6 +116,9 @@ class MoviesRepositoryImpl(
         }
     }
 
+    override suspend fun getMovieTraits(movieIds: Collection<Long>): Map<Long, MovieTraits> =
+        movieCatalogDataSource.getMovieTraits(movieIds)
+
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
         if (currentTmdbId == realTmdbId) return
         val dbId = movieCatalogDataSource.getDbIdByFilmowId(filmowId) ?: return
@@ -141,6 +144,13 @@ class MoviesRepositoryImpl(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     movieCatalogDataSource.enrichMovie(tmdbId, detail, response.credits)
+                    // The keywords come in the same response; saving them lets the universe score this movie's similars.
+                    movieCatalogDataSource.saveMovieFacts(
+                        tmdbId,
+                        response.originalLanguage,
+                        response.productionCountries.mapNotNull { it.iso },
+                        response.keywords?.keywords.orEmpty().map { it.id to (it.name ?: "") }
+                    )
                     movieCatalogDataSource.saveSimilarMovies(tmdbId, similarsWithIds)
                     movieCatalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
                 } catch (e: Exception) {

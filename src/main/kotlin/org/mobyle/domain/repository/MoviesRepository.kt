@@ -12,6 +12,8 @@ interface MoviesRepository {
      * Null when no such movie exists; empty when it has no TMDB id or TMDB cannot be reached.
      */
     suspend fun getSimilarMovies(movieId: Long): List<Movie>?
+    /** The saved genres and keywords of each catalog movie in [movieIds]; movies without any are left out. */
+    suspend fun getMovieTraits(movieIds: Collection<Long>): Map<Long, MovieTraits>
     suspend fun searchMovies(query: String, page: Int): MovieListing
     suspend fun discoverMovies(
         page: Int,

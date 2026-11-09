@@ -541,6 +541,27 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
         }
     }
 
+    override fun getMovieTraits(dbIds: Collection<Long>): Map<Long, MovieTraits> {
+        if (dbIds.isEmpty()) return emptyMap()
+        return transaction {
+            val genresByMovie = (MovieGenresTable innerJoin GenresTable)
+                .select(MovieGenresTable.movieId, GenresTable.name)
+                .where { MovieGenresTable.movieId inList dbIds }
+                .groupBy({ row -> row[MovieGenresTable.movieId].value }, { row -> row[GenresTable.name] })
+            val keywordsByMovie = MovieKeywordsTable
+                .select(MovieKeywordsTable.movieId, MovieKeywordsTable.name)
+                .where { MovieKeywordsTable.movieId inList dbIds }
+                .groupBy({ row -> row[MovieKeywordsTable.movieId].value }, { row -> row[MovieKeywordsTable.name] })
+
+            (genresByMovie.keys + keywordsByMovie.keys).associateWith { movieDbId ->
+                MovieTraits(
+                    genres = genresByMovie[movieDbId].orEmpty().toSet(),
+                    keywords = keywordsByMovie[movieDbId].orEmpty().filter { name -> name.isNotBlank() }.toSet()
+                )
+            }
+        }
+    }
+
     override fun getWatchProviders(tmdbId: Int): CachedData<List<WatchProvider>> {
         return transaction {
             val movieDbId = MoviesTable.selectAll()
