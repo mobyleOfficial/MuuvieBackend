@@ -212,9 +212,10 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         }
     }
 
-    override fun knownTmdbId(source: ImportSource, externalId: String): Int? = when (source) {
-        ImportSource.FILMOW -> catalog.findByFilmowId(externalId)?.tmdbId
-        ImportSource.LETTERBOXD -> catalog.findByLetterboxdId(externalId)?.tmdbId
+    override fun knownTmdbId(source: ImportSource, externalId: String): Int? = when {
+        externalId.startsWith(ImportedMovie.TITLE_KEY_PREFIX) -> null
+        source == ImportSource.FILMOW -> catalog.findByFilmowId(externalId)?.tmdbId
+        else -> catalog.findByLetterboxdId(externalId)?.tmdbId
     }
 
     // ── Writer ──────────────────────────────────────────────────────────────
@@ -293,8 +294,10 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
 
     /** The catalog movie for the imported one, with the source data the TMDB enrichment uses. */
     private fun ensureMovie(movie: ImportedMovie, source: ImportSource): Long = transaction {
-        val filmowId = movie.externalId.takeIf { source == ImportSource.FILMOW }
-        val letterboxdId = movie.externalId.takeIf { source == ImportSource.LETTERBOXD }
+        // A title key (title and year) is not an id on the source and is never stored as one.
+        val sourceId = movie.externalId.takeUnless { it.startsWith(ImportedMovie.TITLE_KEY_PREFIX) }
+        val filmowId = sourceId.takeIf { source == ImportSource.FILMOW }
+        val letterboxdId = sourceId.takeIf { source == ImportSource.LETTERBOXD }
         var id = catalog.upsertMovie(
             movie = Movie(
                 tmdbId = movie.tmdbId,

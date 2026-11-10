@@ -8,6 +8,7 @@ import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
 import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 import org.mobyle.domain.model.vocabulary.Visibility
+import org.mobyle.domain.policy.MovieMatchPolicy
 
 /** A movie as the source knows it. [externalId] is the id on the source (e.g. the Filmow id). */
 @Serializable
@@ -32,7 +33,16 @@ data class ImportedMovie(
     val tmdbId: Int? = null,
     // MovieMatchMethod wire value of that match.
     val matchMethod: String? = null
-)
+) {
+    companion object {
+        /** Prefix of [externalId]s made from the title and year, which are not ids on the source. */
+        const val TITLE_KEY_PREFIX = "title:"
+
+        /** The id of a movie the source gives no id for; the same movie gets the same key on reimports. */
+        fun titleKey(title: String, year: Int?): String =
+            "$TITLE_KEY_PREFIX${MovieMatchPolicy.normalize(title)}:${year ?: ""}"
+    }
+}
 
 @Serializable
 data class ImportedList(

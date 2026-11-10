@@ -69,8 +69,10 @@ import org.mobyle.data.repository.UserRepositoryImpl
 import org.mobyle.data.remote.auth.JWTUtil
 import org.mobyle.domain.repository.AuthRepository
 import org.mobyle.domain.repository.ArticlesRepository
+import org.mobyle.domain.repository.ImportFileReader
 import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
+import org.mobyle.data.imports.FileImportReader
 import org.mobyle.data.local.imports.ImportDataSource
 import org.mobyle.data.local.imports.ImportDataSourceImpl
 import org.mobyle.data.repository.FilmowImportReader
@@ -318,8 +320,10 @@ val dataModule = module {
         FilmowDataSourceImpl()
     }
 
-    // Imports (B3). Letterboxd gets its reader when its input format is decided (A1).
+    // Imports (B3). Filmow is read from its site or from a file; Letterboxd only from files.
     single<ImportDataSource> { ImportDataSourceImpl(catalog = get()) }
+
+    single<ImportFileReader> { FileImportReader() }
 
     single<ImportRepository> { ImportRepositoryImpl(importDataSource = get()) }
 

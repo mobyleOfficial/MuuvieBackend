@@ -2,6 +2,7 @@ package org.mobyle.domain.repository
 
 import org.mobyle.domain.model.ImportBundle
 import org.mobyle.domain.model.ImportCounts
+import org.mobyle.domain.model.ImportFile
 import org.mobyle.domain.model.ImportJob
 import org.mobyle.domain.model.ImportOptions
 import org.mobyle.domain.model.ImportedMovie
@@ -66,6 +67,14 @@ interface ImportRepository {
 interface ImportSourceReader {
     val source: ImportSource
     suspend fun read(inputRef: String, credentials: String): ImportBundle
+}
+
+/**
+ * Reads uploaded files (a Filmow CSV in Letterboxd's import format, or Letterboxd's export)
+ * into a neutral bundle. Throws InvalidFileException or PayloadTooLargeException.
+ */
+interface ImportFileReader {
+    fun read(source: ImportSource, files: List<ImportFile>): ImportBundle
 }
 
 /** Searches TMDB for an imported movie, best candidates first, scored by MovieMatchPolicy. */

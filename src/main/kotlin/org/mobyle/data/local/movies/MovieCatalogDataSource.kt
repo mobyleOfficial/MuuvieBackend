@@ -39,6 +39,7 @@ interface MovieCatalogDataSource {
     /** Filmow ids the catalog can resolve without the Filmow detail page (TMDB id or IMDb link). */
     fun getResolvableFilmowIds(): Set<String>
     fun findDbIdsByFilmowIds(filmowIds: Collection<String>): List<Long>
+    fun findDbIdsByLetterboxdIds(letterboxdIds: Collection<String>): List<Long>
     fun getLocalMovieDetail(tmdbId: Int): MovieDetail?
     fun getLocalMovieDetailByDbId(dbId: Long): MovieDetail?
     fun findByTitle(title: String): Movie?
