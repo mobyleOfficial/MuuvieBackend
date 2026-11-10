@@ -264,6 +264,7 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
                 if (!upsertUserMovie(userDbId, id, movie, source, SystemShelves.STATUS_WATCHED, false)) kept++
                 // Every session of the source becomes a log (a Letterboxd diary logs each rewatch).
                 logs += movie.sessionDates.count { date -> upsertLog(userDbId, id, movie, date, source, options.defaultVisibility) }
+                if (movie.sessionDates.size > 1) countRewatches(userDbId, id)
                 // A review goes to the rating; without a label to hold it, to the session it was written for.
                 if (movie.review != null && (hasReview(userDbId, id, movie.review) || commentSession(userDbId, id, movie))) {
                     reviews++
@@ -396,6 +397,34 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         UserMoviesTable.select(UserMoviesTable.review)
             .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId eq movieDbId) }
             .firstOrNull()?.get(UserMoviesTable.review) == review.trim().take(REVIEW_MAX_LENGTH)
+
+    /**
+     * Each imported session is one viewing: in date order they take cycles 1, 2, 3… and the
+     * movie counts the rewatches, as if logged in the app. Only for a movie the import owns,
+     * whose sessions all came from imports, and on which the user has not started a new cycle
+     * (that would be a rewatch begun in the app); otherwise the cycles stay as they are.
+     */
+    private fun countRewatches(userDbId: Long, movieDbId: Long) {
+        val userMovie = UserMoviesTable.selectAll()
+            .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId eq movieDbId) }
+            .firstOrNull() ?: return
+        if (userMovie[UserMoviesTable.importSource] == MANUAL) return
+        val sessions = WatchLogsTable.select(WatchLogsTable.id, WatchLogsTable.watchedOn, WatchLogsTable.cycle, WatchLogsTable.importSource)
+            .where { (WatchLogsTable.userId eq userDbId) and (WatchLogsTable.movieId eq movieDbId) }
+            .toList()
+        if (sessions.isEmpty() || sessions.any { it[WatchLogsTable.importSource] == null }) return
+        if (userMovie[UserMoviesTable.currentCycle] > sessions.maxOf { it[WatchLogsTable.cycle] }) return
+        val ordered = sessions.sortedWith(compareBy({ it[WatchLogsTable.watchedOn] }, { it[WatchLogsTable.id].value }))
+        ordered.forEachIndexed { index, session ->
+            if (session[WatchLogsTable.cycle] != index + 1) {
+                WatchLogsTable.update({ WatchLogsTable.id eq session[WatchLogsTable.id] }) { it[cycle] = index + 1 }
+            }
+        }
+        UserMoviesTable.update({ UserMoviesTable.id eq userMovie[UserMoviesTable.id] }) {
+            it[currentCycle] = ordered.size
+            it[rewatches] = ordered.size - 1
+        }
+    }
 
     /**
      * Puts a review that has no rating to hold it on an imported session: the one of the review's

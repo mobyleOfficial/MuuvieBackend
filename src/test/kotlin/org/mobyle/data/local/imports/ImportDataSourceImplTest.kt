@@ -224,6 +224,37 @@ class ImportDataSourceImplTest {
     }
 
     @Test
+    fun `each imported session is a viewing, so the later ones are rewatches`() {
+        val rewatched = casablanca.copy(
+            watchedOn = LocalDate(2024, 2, 28),
+            watchDates = listOf(LocalDate(2024, 2, 28), LocalDate(2019, 1, 1), LocalDate(2023, 12, 30))
+        )
+
+        runImport(ImportBundle(watched = listOf(rewatched)), source = ImportSource.LETTERBOXD)
+        runImport(ImportBundle(watched = listOf(rewatched)), source = ImportSource.LETTERBOXD)
+
+        assertEquals(
+            "2019-01-01:1,2023-12-30:2,2024-02-28:3",
+            query("SELECT string_agg(watched_on || ':' || cycle, ',' ORDER BY watched_on) FROM watch_logs")
+        )
+        val row = watch.getUserMovie("ana", movieId(100))!!
+        assertEquals(3, row.currentCycle)
+        assertEquals(2, row.rewatches)
+    }
+
+    @Test
+    fun `cycles the user owns are left alone`() {
+        execute("INSERT INTO movies (id, tmdb_id, title) VALUES (50, 100, 'Casablanca');")
+        watch.setRating("ana", 50, Rating.LOVED, null, false)
+        val rewatched = casablanca.copy(watchDates = listOf(LocalDate(2019, 1, 1), LocalDate(2020, 5, 1)))
+
+        runImport(ImportBundle(watched = listOf(rewatched)), source = ImportSource.LETTERBOXD)
+
+        assertEquals(1L, count("SELECT max(cycle) FROM watch_logs"))
+        assertEquals(0, watch.getUserMovie("ana", 50)!!.rewatches)
+    }
+
+    @Test
     fun `a review goes to the rating, or without one to the session it was written for`() {
         val reviewed = vertigo.copy(stars = 4.0, review = "  Que final.  ")
         val unrated = psycho.copy(
