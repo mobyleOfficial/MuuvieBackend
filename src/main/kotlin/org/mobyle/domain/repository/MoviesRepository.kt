@@ -14,6 +14,11 @@ interface MoviesRepository {
     suspend fun getSimilarMovies(movieId: Long): List<Movie>?
     /** The saved genres and keywords of each catalog movie in [movieIds]; movies without any are left out. */
     suspend fun getMovieTraits(movieIds: Collection<Long>): Map<Long, MovieTraits>
+    /**
+     * Puts the catalog movies of [movieIds] still waiting for enrichment ahead of the background
+     * loop, so their genres and keywords come sooner. Returns at once; the work runs apart.
+     */
+    fun enrichAhead(movieIds: Collection<Long>)
     suspend fun searchMovies(query: String, page: Int): MovieListing
     suspend fun discoverMovies(
         page: Int,

@@ -60,4 +60,13 @@ class MoviesRepositorySimilarTest {
 
         assertTrue(repository.getSimilarMovies(1)!!.isEmpty())
     }
+
+    @Test
+    fun `a movie TMDB lists no similars for is not asked again while the check is fresh`() = runTest {
+        every { catalog.findById(1) } returns Movie(id = 1, tmdbId = 679, title = "Aliens")
+        every { catalog.getSimilarMovies(679) } returns CachedData(emptyList(), isStale = false)
+
+        assertTrue(repository.getSimilarMovies(1)!!.isEmpty())
+        coVerify(exactly = 0) { tmdbDataSource.getMovieDetail(any()) }
+    }
 }

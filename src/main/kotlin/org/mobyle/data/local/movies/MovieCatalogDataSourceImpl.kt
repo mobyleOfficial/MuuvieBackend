@@ -470,6 +470,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .firstOrNull()?.get(MoviesTable.id)?.value ?: return@transaction
 
             val now = Clock.System.now()
+            // Recorded even for an empty list: the negative cache of getSimilarMovies.
+            MoviesTable.update({ MoviesTable.id eq movieDbId }) {
+                it[MoviesTable.similarsCheckedAt] = now
+            }
             for (movie in similars) {
                 val similarTmdbId = movie.tmdbId ?: continue
 
@@ -521,19 +525,24 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
     override fun getSimilarMovies(tmdbId: Int): CachedData<List<Movie>> {
         return transaction {
-            val movieDbId = MoviesTable.selectAll()
+            val movieRow = MoviesTable.selectAll()
                 .where { MoviesTable.tmdbId eq tmdbId }
-                .firstOrNull()?.get(MoviesTable.id)?.value
+                .firstOrNull()
                 ?: return@transaction CachedData(emptyList(), isStale = true)
+            val movieDbId = movieRow[MoviesTable.id].value
+            val staleThreshold = Clock.System.now().minus(kotlin.time.Duration.parse("7d"))
 
             val rows = MovieSimilarsTable.selectAll()
                 .where { MovieSimilarsTable.movieId eq movieDbId }
                 .toList()
 
-            if (rows.isEmpty()) return@transaction CachedData(emptyList(), isStale = true)
+            if (rows.isEmpty()) {
+                // TMDB listed none at a recent check: an answer, not a miss.
+                val checkedAt = movieRow[MoviesTable.similarsCheckedAt]
+                return@transaction CachedData(emptyList(), isStale = checkedAt == null || checkedAt < staleThreshold)
+            }
 
             val oldestFetch = rows.minOf { it[MovieSimilarsTable.fetchedAt] }
-            val staleThreshold = Clock.System.now().minus(kotlin.time.Duration.parse("7d"))
             val isStale = oldestFetch < staleThreshold
 
             val movies = resolveSimilarMovies(movieDbId)

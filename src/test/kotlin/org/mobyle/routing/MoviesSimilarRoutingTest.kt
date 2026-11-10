@@ -12,6 +12,8 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.mockk.coEvery
+import io.mockk.just
+import io.mockk.runs
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.serialization.json.Json
@@ -43,7 +45,9 @@ import kotlin.test.assertTrue
 
 class MoviesSimilarRoutingTest {
 
-    private val moviesRepository = mockk<MoviesRepository>()
+    private val moviesRepository = mockk<MoviesRepository>().also {
+        every { it.enrichAhead(any()) } just runs
+    }
     private val watchRepository = mockk<WatchRepository>()
     private val authRepository = mockk<AuthRepository>()
     private val similarMovies = listOf(Movie(id = 2, tmdbId = 348, title = "Alien"), Movie(id = 3, tmdbId = 679, title = "Aliens"))

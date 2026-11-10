@@ -106,8 +106,10 @@ class MoviesRepositoryImpl(
             if (similarsCache.isStale) refreshVolatileData(tmdbId)
             return similarsCache.data
         }
+        // TMDB listed none at a check younger than 7 days: no need to ask again.
+        if (!similarsCache.isStale) return emptyList()
 
-        // Never fetched (or TMDB lists none): the detail fetch caches the similars with DB ids.
+        // Never fetched, or the empty answer expired: the detail fetch caches the similars with DB ids.
         return try {
             fetchAndCacheDetail(tmdbId).similarMovies
         } catch (e: Exception) {
@@ -118,6 +120,8 @@ class MoviesRepositoryImpl(
 
     override suspend fun getMovieTraits(movieIds: Collection<Long>): Map<Long, MovieTraits> =
         movieCatalogDataSource.getMovieTraits(movieIds)
+
+    override fun enrichAhead(movieIds: Collection<Long>) = enrichmentService.enrichAhead(movieIds)
 
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
         if (currentTmdbId == realTmdbId) return

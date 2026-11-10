@@ -65,6 +65,8 @@ object MoviesTable : LongIdTable("movies") {
     val matchMethod = varchar("match_method", 20).nullable()
     val enrichmentAttempts = integer("enrichment_attempts").default(0)
     val enrichmentRetryAt = timestamp("enrichment_retry_at").nullable()
+    // When TMDB was last asked for the similar movies, even if it listed none (V21).
+    val similarsCheckedAt = timestamp("similars_checked_at").nullable()
 }
 
 /** Production countries of a movie (ISO 3166-1), read by the maratona challenges (B7). */

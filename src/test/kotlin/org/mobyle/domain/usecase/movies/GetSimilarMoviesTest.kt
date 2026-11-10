@@ -2,6 +2,10 @@ package org.mobyle.domain.usecase.movies
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.just
+import io.mockk.runs
+import io.mockk.verify
 import io.mockk.mockk
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieTraits
@@ -14,7 +18,9 @@ import kotlin.test.assertTrue
 
 class GetSimilarMoviesTest {
 
-    private val repository = mockk<MoviesRepository>()
+    private val repository = mockk<MoviesRepository>().also {
+        every { it.enrichAhead(any()) } just runs
+    }
     private val getSimilarMovies = GetSimilarMovies(repository)
     private val alien = Movie(id = 2, tmdbId = 20, title = "Alien")
     private val aliens = Movie(id = 3, tmdbId = 30, title = "Aliens")
@@ -63,5 +69,18 @@ class GetSimilarMoviesTest {
         coEvery { repository.getSimilarMovies(404) } returns null
 
         assertFailsWith<NotFoundException> { getSimilarMovies(404) }
+    }
+
+    @Test
+    fun `movies with no saved traits are enriched ahead, the others are not`() {
+        coEvery { repository.getSimilarMovies(1) } returns listOf(alien, aliens)
+        coEvery { repository.getMovieTraits(listOf(2L, 3L, 1L)) } returns mapOf(
+            1L to MovieTraits(genres = setOf("Terror")),
+            3L to MovieTraits(genres = setOf("Terror"))
+        )
+
+        getSimilarMovies(1)
+
+        verify(exactly = 1) { repository.enrichAhead(listOf(2L)) }
     }
 }

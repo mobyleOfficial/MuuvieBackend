@@ -32,6 +32,7 @@ class MovieEnrichmentService(
     companion object {
         private const val BATCH_SIZE = 50
         private const val DELAY_BETWEEN_CALLS_MS = 250L
+        private const val AHEAD_LIMIT = 10
     }
 
     suspend fun processBatch(): Int {
@@ -61,6 +62,24 @@ class MovieEnrichmentService(
         // Already tried without a confident match: opening it again does not search again.
         if (candidate.unmatched) return MovieMatchStatus.UNMATCHED
         return process(candidate)
+    }
+
+    /**
+     * Catalog movies someone is looking at right now (the similar movies of a universe system),
+     * ahead of the background loop: at most [AHEAD_LIMIT] per call, spaced like the loop, and
+     * only those still waiting. Movies already being processed are skipped by [process].
+     */
+    fun enrichAhead(dbIds: Collection<Long>) {
+        if (dbIds.isEmpty()) return
+        scope.launch {
+            val pending = catalogDataSource.getEnrichmentCandidates(dbIds.distinct())
+                .filter { it.needsEnrichment && !it.unmatched && it.dbId !in inFlight }
+                .take(AHEAD_LIMIT)
+            for (candidate in pending) {
+                process(candidate)
+                delay(DELAY_BETWEEN_CALLS_MS)
+            }
+        }
     }
 
     /** The movies of an import, ahead of the background loop. */

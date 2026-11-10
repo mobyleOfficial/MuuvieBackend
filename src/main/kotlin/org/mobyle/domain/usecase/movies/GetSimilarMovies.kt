@@ -18,6 +18,10 @@ class GetSimilarMovies(private val repository: MoviesRepository) {
 
         val similarMovieIds = similarMovies.map { movie -> movie.id }
         val traitsById = repository.getMovieTraits(similarMovieIds + movieId)
+        // Movies with nothing saved score by rank only: have them enriched sooner, so the next
+        // visit to this system scores them for real.
+        val unknown = similarMovieIds.filter { id -> id !in traitsById }
+        if (unknown.isNotEmpty()) repository.enrichAhead(unknown)
         val affinities = SimilarityScorer.score(
             source = traitsById[movieId] ?: MovieTraits(),
             similarMovieIds = similarMovieIds,
