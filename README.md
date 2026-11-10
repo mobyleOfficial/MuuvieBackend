@@ -299,7 +299,7 @@ The charts (B9) are computed from the user's sessions of a year, counting only t
 
 ### Bichinho, missions and Caderninho
 
-The bichinho (B10) lives in the shelter: first the user picks one of the three starters (`pipoca-doce`, `pipoca-salgada`, `pipoca-caramelo`) for good, then the others unlock by what they watch (movies, minutes, horror or sci-fi movies, movies before 1970, a CineClube joined, a maratona finished, missions done). The catalog and its rules are in `PetCatalog`. The pinned bichinho gets the XP of each session the user logs (20 for a finished movie plus 1 per 10 minutes, up to 30); imported sessions give nothing. Level *n* needs 50 × *n* × (*n* − 1) XP, up to 50. Unlocking publishes `desbloquear_bichinho` with a `bichinho` block.
+The bichinho (B10) lives in the shelter: first the user picks one of the three starters (`pipoca-doce`, `pipoca-salgada`, `pipoca-caramelo`) for good, then the others unlock by what they watch (movies, minutes, horror or sci-fi movies, movies before 1970, a CineClube joined, a maratona finished, missions done, star systems opened in the Universo de Filmes). The catalog and its rules are in `PetCatalog`. The pinned bichinho gets the XP of each session the user logs (20 for a finished movie plus 1 per 10 minutes, up to 30); imported sessions give nothing. Level *n* needs 50 × *n* × (*n* − 1) XP, up to 50. Unlocking publishes `desbloquear_bichinho` with a `bichinho` block.
 
 Each week (from Monday) has three missions, the same for everyone, picked from `MissionCatalog`; their progress comes from the week's own sessions, and a mission gives its XP once when it is reached.
 
@@ -311,6 +311,7 @@ The Caderninho is private. Reading a day never creates it; saving creates it, an
 | POST   | `/users/me/pets/starter` | `{ slug }` one of the starters (201). 409 `starter_chosen` the second time |
 | PUT    | `/users/me/pets/{slug}/pin` | Pins an unlocked bichinho (404 otherwise) |
 | GET    | `/users/{userId}/pets` | Public: the unlocked bichinhos of a profile |
+| POST   | `/users/me/universe/visits` | `{ movieIds[] }` (1 to 50 database ids): the star systems opened in the Universo de Filmes, counted once per movie; unknown ids are skipped. Answers `{ systemsVisited, unlockedPets[] }`. 10 systems unlock `foguete`, 50 unlock `astronauta` |
 | GET    | `/users/me/missions` | `{ weekStart, weekEnd, missions[] }` with `type`, `target`, `progress`, `xp`, `completed` |
 | GET    | `/users/me/diary/{date}` | The day, or an empty one with `saved: false` |
 | PUT    | `/users/me/diary/{date}` | `{ mood?, note?, tasks[] }`; mood `great`, `good`, `okay`, `bad` or `awful` |

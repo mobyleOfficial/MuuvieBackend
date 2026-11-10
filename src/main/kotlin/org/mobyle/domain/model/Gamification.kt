@@ -28,7 +28,9 @@ enum class PetRuleType(val wireValue: String) {
     @SerialName("old_movies") OLD_MOVIES("old_movies"),
     @SerialName("maratonas_finished") MARATONAS_FINISHED("maratonas_finished"),
     @SerialName("cineclubes_joined") CINECLUBES_JOINED("cineclubes_joined"),
-    @SerialName("missions") MISSIONS("missions")
+    @SerialName("missions") MISSIONS("missions"),
+    // Star systems opened in the Universo de Filmes.
+    @SerialName("universe_systems") UNIVERSE_SYSTEMS("universe_systems")
 }
 
 @Serializable
@@ -72,7 +74,8 @@ data class PetProgress(
     val oldMovies: Map<Int, Int>,
     val maratonasFinished: Int,
     val cineclubesJoined: Int,
-    val missions: Int
+    val missions: Int,
+    val universeSystems: Int = 0
 ) {
     fun of(rule: PetRule): Int = when (rule.type) {
         PetRuleType.STARTER -> 0
@@ -83,6 +86,7 @@ data class PetProgress(
         PetRuleType.MARATONAS_FINISHED -> maratonasFinished
         PetRuleType.CINECLUBES_JOINED -> cineclubesJoined
         PetRuleType.MISSIONS -> missions
+        PetRuleType.UNIVERSE_SYSTEMS -> universeSystems
     }
 }
 

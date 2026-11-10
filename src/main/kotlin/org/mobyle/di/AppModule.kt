@@ -19,6 +19,7 @@ import org.mobyle.domain.usecase.gamification.GetPetShelter
 import org.mobyle.domain.usecase.gamification.PetShelterBuilder
 import org.mobyle.domain.usecase.gamification.PetUnlocker
 import org.mobyle.domain.usecase.gamification.PinPet
+import org.mobyle.domain.usecase.gamification.RecordUniverseVisits
 import org.mobyle.domain.usecase.gamification.SaveDiaryDay
 import org.mobyle.domain.usecase.gamification.WeeklyMissions
 import org.mobyle.domain.usecase.stats.GetRetrospective
@@ -346,6 +347,7 @@ val appModule = module {
     factory { GetPetShelter(shelter = get()) }
     factory { ChooseStarterPet(repository = get(), unlocker = get(), shelter = get(), activities = get()) }
     factory { PinPet(repository = get(), shelter = get()) }
+    factory { RecordUniverseVisits(repository = get(), unlocker = get()) }
     factory { WeeklyMissions(repository = get(), catalog = get()) }
     factory { GamificationHook(repository = get(), missions = get(), unlocker = get()) }
     factory { GetDiaryDay(repository = get()) }

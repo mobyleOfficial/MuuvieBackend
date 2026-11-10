@@ -32,10 +32,12 @@ object PetCatalog {
         PetDefinition("fantasminha", PetRarity.COMMON, PetRule(PetRuleType.GENRE_MOVIES, 5, genreId = 27)),
         PetDefinition("robozinho", PetRarity.COMMON, PetRule(PetRuleType.GENRE_MOVIES, 5, genreId = 878)),
         PetDefinition("lanterninha", PetRarity.COMMON, PetRule(PetRuleType.CINECLUBES_JOINED, 1)),
+        PetDefinition("foguete", PetRarity.COMMON, PetRule(PetRuleType.UNIVERSE_SYSTEMS, 10)),
         PetDefinition("rolo-de-filme", PetRarity.RARE, PetRule(PetRuleType.MOVIES, 50)),
         PetDefinition("dinossauro", PetRarity.RARE, PetRule(PetRuleType.OLD_MOVIES, 10, beforeYear = 1970)),
         PetDefinition("coruja", PetRarity.RARE, PetRule(PetRuleType.MISSIONS, 10)),
         PetDefinition("trofeu", PetRarity.RARE, PetRule(PetRuleType.MARATONAS_FINISHED, 1)),
+        PetDefinition("astronauta", PetRarity.RARE, PetRule(PetRuleType.UNIVERSE_SYSTEMS, 50)),
         PetDefinition("projetor", PetRarity.LEGENDARY, PetRule(PetRuleType.MINUTES, 30_000)),
         PetDefinition("estatueta", PetRarity.LEGENDARY, PetRule(PetRuleType.MOVIES, 250))
     )

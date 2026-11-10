@@ -598,6 +598,17 @@ object UserMissionsTable : LongIdTable("user_missions") {
     }
 }
 
+/** The star systems a user opened in the Universo de Filmes, once each (phase 5). */
+object UniverseVisitsTable : LongIdTable("universe_visits") {
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
+    val movieId = reference("movie_id", MoviesTable, onDelete = ReferenceOption.CASCADE)
+    val visitedAt = timestamp("visited_at").defaultExpression(CurrentTimestamp)
+
+    init {
+        uniqueIndex("uq_universe_visits", userId, movieId)
+    }
+}
+
 object DiaryDaysTable : LongIdTable("diary_days") {
     val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val day = date("day")
