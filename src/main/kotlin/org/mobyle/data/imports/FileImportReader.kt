@@ -92,7 +92,7 @@ class FileImportReader(private val limits: Limits = Limits()) : ImportFileReader
     }
 
     /**
-     * The files of the export the import uses. Ignored: profile, reviews, comments, liked lists
+     * The files of the export the import uses. Ignored: profile, comments, liked lists
      * and reviews, and the deleted/ and orphaned/ folders.
      */
     private fun isExportFile(entryPath: String): Boolean {
@@ -131,6 +131,7 @@ class FileImportReader(private val limits: Limits = Limits()) : ImportFileReader
         val header = file.rows.first().map(Csv::normalizeHeader).toSet()
         val isExport = "name" in header && "letterboxduri" in header
         return when {
+            isExport && "review" in header -> ImportCsvKind.REVIEWS
             isExport && "watcheddate" in header -> ImportCsvKind.DIARY
             isExport && "rating" in header -> ImportCsvKind.RATINGS
             isExport -> when (file.fileName.lowercase()) {
@@ -160,7 +161,7 @@ class FileImportReader(private val limits: Limits = Limits()) : ImportFileReader
         private const val LIST_PREAMBLE = "letterboxd list export"
         private const val BUFFER_SIZE = 8 * 1024
         private val ZIP_MAGIC = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
-        private val TOP_LEVEL_FILES = setOf("watched.csv", "ratings.csv", "diary.csv", "watchlist.csv")
+        private val TOP_LEVEL_FILES = setOf("watched.csv", "ratings.csv", "diary.csv", "reviews.csv", "watchlist.csv")
         private val IMPORT_FORMAT_KEYS = setOf("title", "imdbid", "tmdbid", "letterboxduri")
     }
 }

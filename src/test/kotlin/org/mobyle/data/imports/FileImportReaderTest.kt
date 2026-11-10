@@ -113,7 +113,8 @@ class FileImportReaderTest {
                 "2024-03-01,Past Lives,2023,https://boxd.it/entry2,4.5,Yes,,2024-02-28\n" +
                 "2024-01-06,\"Crouching Tiger, Hidden Dragon\",2000,https://boxd.it/entry3,3,,,2024-01-06\n",
             "reviews.csv" to "Date,Name,Year,Letterboxd URI,Rating,Rewatch,Review,Tags,Watched Date\n" +
-                "2024-01-05,Something Else,1999,https://boxd.it/entry9,1,,Bad,,2024-01-05\n",
+                "2024-01-05,Past Lives,2023,https://boxd.it/entry1,4.5,,\"First, wow\",,2023-12-30\n" +
+                "2024-03-01,Past Lives,2023,https://boxd.it/entry2,4.5,Yes,Even better,,2024-02-28\n",
             "watchlist.csv" to "Date,Name,Year,Letterboxd URI\n2024-02-01,Perfect Days,2023,https://boxd.it/dddd\n",
             "likes/films.csv" to "Date,Name,Year,Letterboxd URI\n2024-01-05,Past Lives,2023,https://boxd.it/aaaa\n",
             "likes/lists.csv" to "Date,Name,Year,Letterboxd URI\n2024-01-05,Nope,2022,https://boxd.it/zzzz\n",
@@ -150,13 +151,30 @@ class FileImportReaderTest {
         assertEquals("https://boxd.it/aaaa", pastLives.externalId)
         assertEquals(4.5, pastLives.stars)
         assertEquals(LocalDate(2024, 2, 28), pastLives.watchedOn)
+        // Every diary entry is a session, the rewatch included.
+        assertEquals(listOf(LocalDate(2023, 12, 30), LocalDate(2024, 2, 28)), pastLives.sessionDates)
         // Rated only: still watched, with no date.
         assertEquals(5.0, watched.getValue("Aftersun").stars)
         assertNull(watched.getValue("Aftersun").watchedOn)
         // No rating file row: the diary rates it.
         assertEquals(3.0, watched.getValue("Crouching Tiger, Hidden Dragon").stars)
-        // reviews.csv, likes/lists.csv and deleted/ are ignored.
-        assertTrue("Something Else" !in watched && "Gone" !in watched && "Nope" !in watched)
+        // likes/lists.csv and deleted/ are ignored.
+        assertTrue("Gone" !in watched && "Nope" !in watched)
+    }
+
+    @Test
+    fun `reviews join their movie and the latest one wins`() {
+        val watched = reader.read(ImportSource.LETTERBOXD, listOf(export)).watched.associateBy { it.title }
+
+        assertEquals("Even better", watched.getValue("Past Lives").review)
+        assertEquals(1, reader.read(ImportSource.LETTERBOXD, listOf(export)).preview().reviews)
+    }
+
+    @Test
+    fun `the import format brings its Review column`() {
+        val file = csv("mine.csv", "Title,Year,Rating,Review\nVertigo,1958,5,\"Obra-prima, revi\"\n")
+
+        assertEquals("Obra-prima, revi", reader.read(ImportSource.FILMOW, listOf(file)).watched.single().review)
     }
 
     @Test

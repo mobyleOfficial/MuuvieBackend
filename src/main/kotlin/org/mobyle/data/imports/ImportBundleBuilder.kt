@@ -48,6 +48,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
                     ?.let { it.copy(stars = ImportCells.stars(table.value(row, "rating"))) }
                     ?.let(::mergeWatched)
                 ImportCsvKind.DIARY -> diaryEntry(table, row)
+                ImportCsvKind.REVIEWS -> diaryEntry(table, row, withReview = true)
                 ImportCsvKind.WATCHLIST -> exportMovie(table, row)?.let { watchlist.putIfAbsent(it.externalId, it) }
                 ImportCsvKind.LIKES -> exportMovie(table, row)?.let { favorites.putIfAbsent(it.externalId, it) }
                 ImportCsvKind.LIST -> Unit
@@ -73,6 +74,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             imdbUrl = imdbUrl,
             stars = ImportCells.stars(table.value(row, "rating")) ?: ImportCells.starsFromTen(table.value(row, "rating10")),
             watchedOn = ImportCells.date(table.value(row, "watcheddate")),
+            review = table.value(row, "review"),
             tmdbId = tmdbId,
             matchMethod = tmdbId?.let { MovieMatchMethod.TMDB.wireValue }
         )
@@ -89,17 +91,24 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
         )
     }
 
-    /** A diary entry dates (and, without ratings.csv, rates) the watched movie of the same title and year. */
-    private fun diaryEntry(table: CsvTable, row: List<String>) {
+    /**
+     * A diary entry adds a session to the watched movie of the same title and year (and rates it
+     * when ratings.csv did not). A review entry does the same and brings its text; reviews.csv is
+     * in date order, so the latest review of a movie wins.
+     */
+    private fun diaryEntry(table: CsvTable, row: List<String>, withReview: Boolean = false) {
         val title = table.value(row, "name") ?: return
         val year = ImportCells.year(table.value(row, "year"))
         val titleKey = ImportedMovie.titleKey(title, year)
         val externalId = watchedByTitle[titleKey] ?: titleKey
         val existing = watched[externalId] ?: ImportedMovie(externalId = externalId, title = title, year = year)
+        val watchedOn = ImportCells.date(table.value(row, "watcheddate"))
         mergeWatched(
             existing.copy(
-                watchedOn = ImportCells.latest(existing.watchedOn, ImportCells.date(table.value(row, "watcheddate"))),
-                stars = existing.stars ?: ImportCells.stars(table.value(row, "rating"))
+                watchedOn = watchedOn,
+                watchDates = listOfNotNull(watchedOn),
+                stars = existing.stars ?: ImportCells.stars(table.value(row, "rating")),
+                review = if (withReview) table.value(row, "review") else null
             )
         )
     }
@@ -113,6 +122,9 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             imdbUrl = existing.imdbUrl ?: movie.imdbUrl,
             stars = movie.stars ?: existing.stars,
             watchedOn = ImportCells.latest(existing.watchedOn, movie.watchedOn),
+            watchDates = (existing.watchDates + listOfNotNull(existing.watchedOn, movie.watchedOn) + movie.watchDates)
+                .distinct().sorted(),
+            review = movie.review ?: existing.review,
             tmdbId = existing.tmdbId ?: movie.tmdbId,
             matchMethod = existing.matchMethod ?: movie.matchMethod
         )
@@ -153,6 +165,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             ImportCsvKind.IMPORT_FORMAT,
             ImportCsvKind.RATINGS,
             ImportCsvKind.DIARY,
+            ImportCsvKind.REVIEWS,
             ImportCsvKind.WATCHLIST,
             ImportCsvKind.LIKES,
             ImportCsvKind.LIST

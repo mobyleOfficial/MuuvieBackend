@@ -2,6 +2,7 @@ package org.mobyle.data.local.imports
 
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atTime
@@ -13,6 +14,8 @@ import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNotNull
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.isNull
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.insertAndGetId
@@ -50,6 +53,7 @@ import org.mobyle.domain.model.vocabulary.ShelfSort
 import org.mobyle.domain.model.vocabulary.Rating
 import org.mobyle.domain.model.vocabulary.Visibility
 import org.mobyle.domain.model.vocabulary.WatchMode
+import org.mobyle.domain.policy.MovieMatchPolicy
 
 /** Import jobs, the confirmation queue and the bundle writer (B3). Users are identified by their external id. */
 interface ImportDataSource {
@@ -241,13 +245,14 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         var processed = 0
         var kept = 0
         var logs = 0
+        var reviews = 0
 
         fun step() {
             processed++
             if (processed % PROGRESS_EVERY == 0 || processed == total) onProgress(processed, total)
         }
 
-        fun movieId(movie: ImportedMovie): Long = movieIds.getOrPut(movie.externalId) { ensureMovie(movie, source) }
+        fun movieId(movie: ImportedMovie): Long = movieIds.getOrPut(movie.externalId) { ensureMovie(movie, source, userDbId) }
 
         for (movie in chosen.watchlist) {
             transaction { if (!upsertUserMovie(userDbId, movieId(movie), movie, source, SystemShelves.STATUS_WANT_TO_WATCH, false)) kept++ }
@@ -257,7 +262,9 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
             transaction {
                 val id = movieId(movie)
                 if (!upsertUserMovie(userDbId, id, movie, source, SystemShelves.STATUS_WATCHED, false)) kept++
-                if (movie.watchedOn != null && upsertLog(userDbId, id, movie, source, options.defaultVisibility)) logs++
+                if (movie.review != null && hasReview(userDbId, id, movie.review)) reviews++
+                // Every session of the source becomes a log (a Letterboxd diary logs each rewatch).
+                logs += movie.sessionDates.count { date -> upsertLog(userDbId, id, movie, date, source, options.defaultVisibility) }
             }
             step()
         }
@@ -288,17 +295,36 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
             lists = chosen.lists.size,
             logs = logs,
             unmatched = queued,
-            keptFromMuuvie = kept
+            keptFromMuuvie = kept,
+            reviews = reviews
         )
     }
 
     /** The catalog movie for the imported one, with the source data the TMDB enrichment uses. */
-    private fun ensureMovie(movie: ImportedMovie, source: ImportSource): Long = transaction {
+    private fun ensureMovie(movie: ImportedMovie, source: ImportSource, userDbId: Long? = null): Long = transaction {
         // A title key (title and year) is not an id on the source and is never stored as one.
         val sourceId = movie.externalId.takeUnless { it.startsWith(ImportedMovie.TITLE_KEY_PREFIX) }
         val filmowId = sourceId.takeIf { source == ImportSource.FILMOW }
         val letterboxdId = sourceId.takeIf { source == ImportSource.LETTERBOXD }
-        var id = catalog.upsertMovie(
+        val knownBySourceId = when {
+            filmowId != null -> MoviesTable.select(MoviesTable.id).where { MoviesTable.filmowId eq filmowId }.any()
+            letterboxdId != null -> MoviesTable.select(MoviesTable.id).where { MoviesTable.letterboxdId eq letterboxdId }.any()
+            else -> false
+        }
+        val placeholder = if (movie.tmdbId == null && !knownBySourceId) findPlaceholder(movie, userDbId) else null
+        val hasSourceData = filmowId != null || letterboxdId != null || movie.posterUrl != null ||
+            movie.originalTitle != null || movie.localTitle != null
+        if (placeholder != null && hasSourceData) {
+            // The same movie from an earlier import: the last import takes it over.
+            MoviesTable.update({ MoviesTable.id eq placeholder }) { row ->
+                if (filmowId != null) row[MoviesTable.filmowId] = filmowId
+                if (letterboxdId != null) row[MoviesTable.letterboxdId] = letterboxdId
+                movie.posterUrl?.let { row[posterPath] = it }
+                movie.originalTitle?.let { row[originalTitle] = it }
+                movie.localTitle?.let { row[localTitle] = it }
+            }
+        }
+        var id = placeholder ?: catalog.upsertMovie(
             movie = Movie(
                 tmdbId = movie.tmdbId,
                 title = movie.title,
@@ -337,6 +363,38 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
     }
 
     /**
+     * A placeholder (no TMDB id) an earlier import made for the same title and year, from any
+     * source: the Filmow login and the Filmow CSV, or Filmow and Letterboxd, name the same movie
+     * without sharing an id. Reusing it keeps one movie instead of two, and keeps file reimports
+     * idempotent for movies keyed by title. The user's own placeholder comes first.
+     */
+    private fun findPlaceholder(movie: ImportedMovie, userDbId: Long?): Long? {
+        val key = MovieMatchPolicy.normalize(movie.title).takeIf { it.isNotEmpty() } ?: return null
+        val sameYear = movie.year?.let { MoviesTable.year eq it } ?: MoviesTable.year.isNull()
+        val candidates = MoviesTable
+            .select(MoviesTable.id, MoviesTable.title, MoviesTable.originalTitle, MoviesTable.localTitle)
+            .where { MoviesTable.tmdbId.isNull() and sameYear }
+            .filter { row ->
+                listOfNotNull(row[MoviesTable.title], row[MoviesTable.originalTitle], row[MoviesTable.localTitle])
+                    .any { MovieMatchPolicy.normalize(it) == key }
+            }
+            .map { it[MoviesTable.id].value }
+            .sorted()
+        if (candidates.size <= 1 || userDbId == null) return candidates.firstOrNull()
+        val owned = UserMoviesTable.select(UserMoviesTable.movieId)
+            .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId inList candidates) }
+            .map { it[UserMoviesTable.movieId].value }
+            .toSet()
+        return candidates.firstOrNull { it in owned } ?: candidates.first()
+    }
+
+    /** Whether the review was kept: it belongs to the rating, so a movie without a label has none. */
+    private fun hasReview(userDbId: Long, movieDbId: Long, review: String): Boolean =
+        UserMoviesTable.select(UserMoviesTable.review)
+            .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId eq movieDbId) }
+            .firstOrNull()?.get(UserMoviesTable.review) == review.trim().take(REVIEW_MAX_LENGTH)
+
+    /**
      * One user_movies row per pair. A row the user owns (source manual) keeps everything and
      * only gets empty fields filled; returns false in that case. An imported row follows the
      * source, except that a watched movie is never moved back to the watchlist and a
@@ -353,6 +411,7 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         val now = Clock.System.now()
         val label = if (favorite) Rating.FAVORITE.wireValue else movie.stars?.takeIf { it > 0 }?.let { Rating.fromStars(it).wireValue }
         val watchedAt = movie.watchedOn?.atTime(LocalTime(0, 0))?.toInstant(TimeZone.UTC)
+        val review = movie.review?.trim()?.takeIf { it.isNotEmpty() }?.take(REVIEW_MAX_LENGTH)
         val existing = UserMoviesTable.selectAll()
             .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId eq movieDbId) }
             .firstOrNull()
@@ -364,6 +423,8 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
                 it[UserMoviesTable.status] = status
                 it[rating] = label
                 if (label != null) it[ratedAt] = now
+                // The review belongs to the rating; without a label there is nothing to attach it to.
+                if (label != null && review != null) it[UserMoviesTable.review] = review
                 if (status == SystemShelves.STATUS_WATCHED) it[UserMoviesTable.watchedAt] = watchedAt ?: now
                 it[importSource] = source.wireValue
                 it[importedAt] = now
@@ -380,6 +441,8 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
                     it[rating] = label
                     it[ratedAt] = now
                 }
+                val hasLabel = existing[UserMoviesTable.rating] != null || label != null
+                if (existing[UserMoviesTable.review] == null && review != null && hasLabel) it[UserMoviesTable.review] = review
                 if (existing[UserMoviesTable.watchedAt] == null && watchedAt != null) it[UserMoviesTable.watchedAt] = watchedAt
                 it[importedAt] = now
             }
@@ -394,9 +457,12 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
                 it[rating] = label
                 if (existing[UserMoviesTable.ratedAt] == null) it[ratedAt] = now
             }
-            if (nextStatus == SystemShelves.STATUS_WATCHED && existing[UserMoviesTable.watchedAt] == null) {
+            // An imported row follows the last import: its review and its watch date win.
+            if (review != null && (label != null || existing[UserMoviesTable.rating] != null)) it[UserMoviesTable.review] = review
+            if (nextStatus == SystemShelves.STATUS_WATCHED && (watchedAt != null || existing[UserMoviesTable.watchedAt] == null)) {
                 it[UserMoviesTable.watchedAt] = watchedAt ?: now
             }
+            it[UserMoviesTable.importSource] = source.wireValue
             it[importedAt] = now
             it[updatedAt] = now
         }
@@ -405,13 +471,20 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
     }
 
     /** A completed log on the watch date, once per (movie, date, source). Returns false without a date. */
-    private fun upsertLog(userDbId: Long, movieDbId: Long, movie: ImportedMovie, source: ImportSource, visibility: Visibility): Boolean {
-        val watchedOn = movie.watchedOn ?: return false
+    private fun upsertLog(
+        userDbId: Long,
+        movieDbId: Long,
+        movie: ImportedMovie,
+        watchedOn: LocalDate,
+        source: ImportSource,
+        visibility: Visibility
+    ): Boolean {
         val externalId = "${movie.externalId}@$watchedOn"
+        // One imported session per movie and day, whichever import or source brought it first.
         val exists = WatchLogsTable.selectAll()
             .where {
-                (WatchLogsTable.userId eq userDbId) and (WatchLogsTable.importSource eq source.wireValue) and
-                    (WatchLogsTable.externalId eq externalId)
+                (WatchLogsTable.userId eq userDbId) and (WatchLogsTable.movieId eq movieDbId) and
+                    (WatchLogsTable.watchedOn eq watchedOn) and WatchLogsTable.importSource.isNotNull()
             }
             .any()
         if (exists) return true
@@ -481,6 +554,19 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
             }
             .any()
         if (alreadyQueued) return
+        // The same movie waiting from an earlier import: the last one replaces it.
+        if (movieDbId != null) {
+            val earlier = (ImportUnmatchedTable innerJoin ImportJobsTable)
+                .select(ImportUnmatchedTable.id)
+                .where {
+                    (ImportJobsTable.userId eq userDbId) and (ImportUnmatchedTable.movieId eq movieDbId) and
+                        (ImportUnmatchedTable.resolution eq RESOLUTION_PENDING)
+                }
+                .map { it[ImportUnmatchedTable.id].value }
+            if (earlier.isNotEmpty()) {
+                ImportUnmatchedTable.update({ ImportUnmatchedTable.id inList earlier }) { it[resolution] = RESOLUTION_SKIPPED }
+            }
+        }
         ImportUnmatchedTable.insert {
             it[jobId] = job.id
             it[externalId] = movie.externalId
@@ -508,7 +594,8 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
     }
 
     override fun matchUnmatched(item: UnmatchedItem, source: ImportSource, tmdbId: Int, title: String): UnmatchedItem = transaction {
-        val filmowId = item.movie.externalId.takeIf { source == ImportSource.FILMOW }
+        val filmowId = item.movie.externalId
+            .takeIf { source == ImportSource.FILMOW && !it.startsWith(ImportedMovie.TITLE_KEY_PREFIX) }
         val placeholderId = item.movieId ?: ensureMovie(item.movie, source)
         catalog.resolveScrapedMovie(placeholderId, tmdbId, filmowId)
         val movieDbId = MoviesTable.select(MoviesTable.id).where { MoviesTable.tmdbId eq tmdbId }.firstOrNull()
@@ -563,7 +650,10 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         const val MANUAL = "manual"
         const val UNIQUE_VIOLATION = "23505"
         const val INTERRUPTED = "Interrupted by a server restart"
+        const val RESOLUTION_PENDING = "pending"
         const val RESOLUTION_MATCHED = "matched"
+        // Same limit as a review written in the app (SetMovieRating).
+        const val REVIEW_MAX_LENGTH = 10_000
         const val RESOLUTION_SKIPPED = "skipped"
         const val PROGRESS_EVERY = 25
         const val NAME_MAX = 255

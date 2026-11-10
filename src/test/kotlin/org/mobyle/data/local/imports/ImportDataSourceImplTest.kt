@@ -3,7 +3,12 @@ package org.mobyle.data.local.imports
 import io.mockk.mockk
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.mobyle.data.local.database.UserMoviesTable
 import org.mobyle.data.local.database.DatabaseMigrations
 import org.mobyle.data.local.movies.MovieCatalogDataSourceImpl
 import org.mobyle.data.local.shelves.ShelfDataSourceImpl
@@ -200,20 +205,86 @@ class ImportDataSourceImplTest {
         assertEquals(0L, count("SELECT count(*) FROM shelves WHERE system_type IS NULL"))
     }
 
+    // ── File imports (research/features/csv-import/spec.md) ─────────────────
+
+    @Test
+    fun `every session of the source becomes a log, once`() {
+        val rewatched = casablanca.copy(
+            watchedOn = LocalDate(2024, 2, 28),
+            watchDates = listOf(LocalDate(2019, 1, 1), LocalDate(2024, 2, 28), LocalDate(2023, 12, 30))
+        )
+
+        val counts = runImport(ImportBundle(watched = listOf(rewatched)), source = ImportSource.LETTERBOXD)
+        runImport(ImportBundle(watched = listOf(rewatched)), source = ImportSource.LETTERBOXD)
+
+        assertEquals(3, counts.logs)
+        assertEquals(3, ImportBundle(watched = listOf(rewatched)).preview().logs)
+        assertEquals(3L, count("SELECT count(*) FROM watch_logs"))
+        assertEquals(LocalDate(2024, 2, 28), watchedOn())
+    }
+
+    @Test
+    fun `a review goes to the rating, and needs a label to stay`() {
+        val reviewed = vertigo.copy(stars = 4.0, review = "  Que final.  ")
+        val unrated = psycho.copy(review = "Sem nota")
+
+        val counts = runImport(ImportBundle(watched = listOf(reviewed, unrated)), source = ImportSource.LETTERBOXD)
+
+        val row = watch.getUserMovie("ana", movieId(101))!!
+        assertEquals(Rating.LIKED, row.rating)
+        assertEquals("Que final.", row.review)
+        assertNull(watch.getUserMovie("ana", movieId(102))!!.review)
+        assertEquals(1, counts.reviews)
+    }
+
+    @Test
+    fun `the same movie from a later import takes over its placeholder, and the last data wins`() {
+        val fromLogin = obscure.copy(stars = 2.0, watchedOn = LocalDate(2020, 1, 1))
+        val fromFile = ImportedMovie(
+            ImportedMovie.titleKey("Filme Raro", 1971), "Filme Raro", year = 1971,
+            stars = 5.0, watchedOn = LocalDate(2022, 2, 2), review = "Revi"
+        )
+
+        runImport(ImportBundle(watched = listOf(fromLogin)), unmatched = mapOf("f-4" to emptyList()))
+        runImport(ImportBundle(watched = listOf(fromFile)), unmatched = mapOf(fromFile.externalId to emptyList()))
+
+        assertEquals(1L, count("SELECT count(*) FROM movies WHERE title = 'Filme Raro'"))
+        assertEquals("f-4", query("SELECT filmow_id FROM movies WHERE title = 'Filme Raro'"))
+        val row = watch.getUserMovie("ana", count("SELECT id FROM movies WHERE title = 'Filme Raro'"))!!
+        assertEquals(Rating.LOVED, row.rating)
+        assertEquals("Revi", row.review)
+        assertEquals(LocalDate(2022, 2, 2), watchedOn())
+        assertEquals(2L, count("SELECT count(*) FROM watch_logs"))
+        assertEquals("skipped,pending", query("SELECT string_agg(resolution, ',' ORDER BY id) FROM import_unmatched"))
+    }
+
+    @Test
+    fun `a movie keyed by title is never stored as a source id, and a reimport reuses it`() {
+        val keyed = ImportedMovie(ImportedMovie.titleKey("Filme Raro", 1971), "Filme Raro", year = 1971)
+
+        runImport(ImportBundle(watched = listOf(keyed)), source = ImportSource.LETTERBOXD)
+        runImport(ImportBundle(watched = listOf(keyed)), source = ImportSource.LETTERBOXD)
+
+        assertEquals(1L, count("SELECT count(*) FROM movies WHERE title = 'Filme Raro'"))
+        assertEquals(0L, count("SELECT count(*) FROM movies WHERE filmow_id LIKE 'title:%' OR letterboxd_id LIKE 'title:%'"))
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private fun runImport(
         bundle: ImportBundle,
         options: ImportOptions = ImportOptions(),
-        unmatched: Map<String, List<MovieCandidate>> = emptyMap()
-    ) = imports.getJob(runJob(bundle, options, unmatched).id)!!.counts!!
+        unmatched: Map<String, List<MovieCandidate>> = emptyMap(),
+        source: ImportSource = ImportSource.FILMOW
+    ) = imports.getJob(runJob(bundle, options, unmatched, source).id)!!.counts!!
 
     private fun runJob(
         bundle: ImportBundle,
         options: ImportOptions = ImportOptions(),
-        unmatched: Map<String, List<MovieCandidate>> = emptyMap()
+        unmatched: Map<String, List<MovieCandidate>> = emptyMap(),
+        source: ImportSource = ImportSource.FILMOW
     ): ImportJob {
-        val job = imports.createJob("ana", ImportSource.FILMOW, "ana")!!
+        val job = imports.createJob("ana", source, "ana")!!
         imports.transition(job.id, setOf(ImportStatus.PENDING), ImportStatus.READING, null)
         imports.saveRead(job.id, bundle)
         imports.confirm(job.id, options)
@@ -240,6 +311,11 @@ class ImportDataSourceImplTest {
     private fun shelfMovieIds(shelfId: Long): List<Long> {
         val shelf = shelves.getUserShelves("ana", everyone, page).results.first { it.id == shelfId }
         return shelves.getShelfMovies(shelf, ShelfMovieFilter(), page).results.map { it.movieId }
+    }
+
+    /** The watch date of the user's only movie row, read as the writer stores it (midnight UTC). */
+    private fun watchedOn(): LocalDate = transaction {
+        UserMoviesTable.selectAll().single()[UserMoviesTable.watchedAt]!!.toLocalDateTime(TimeZone.UTC).date
     }
 
     private fun movieId(tmdbId: Int): Long = count("SELECT id FROM movies WHERE tmdb_id = $tmdbId")

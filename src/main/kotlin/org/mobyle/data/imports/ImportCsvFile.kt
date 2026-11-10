@@ -9,6 +9,7 @@ enum class ImportCsvKind {
     WATCHED,
     RATINGS,
     DIARY,
+    REVIEWS,
     WATCHLIST,
     LIKES,
     LIST

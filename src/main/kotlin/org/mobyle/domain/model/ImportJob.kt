@@ -28,12 +28,20 @@ data class ImportedMovie(
     val imdbUrl: String? = null,
     // 0.5-5 stars, as both sources rate.
     val stars: Double? = null,
+    // The latest watch; the date of the movie on "Já assisti".
     val watchedOn: LocalDate? = null,
+    // Every session the source has (a Letterboxd diary logs rewatches); each becomes a watch log.
+    val watchDates: List<LocalDate> = emptyList(),
+    // The user's review on the source; it goes to the rating, as the Muuvie keeps one per movie.
+    val review: String? = null,
     // Set by the matcher before writing, when TMDB matched with confidence.
     val tmdbId: Int? = null,
     // MovieMatchMethod wire value of that match.
     val matchMethod: String? = null
 ) {
+    /** The dates that become watch logs, oldest first. */
+    val sessionDates: List<LocalDate> get() = (watchDates + listOfNotNull(watchedOn)).distinct().sorted()
+
     companion object {
         /** Prefix of [externalId]s made from the title and year, which are not ids on the source. */
         const val TITLE_KEY_PREFIX = "title:"
@@ -72,7 +80,8 @@ data class ImportBundle(
         watched = watched.size,
         watchlist = watchlist.size,
         favorites = favorites.size,
-        logs = watched.count { it.watchedOn != null },
+        logs = watched.sumOf { it.sessionDates.size },
+        reviews = watched.count { it.review != null },
         lists = lists.map { ImportPreviewList(it.externalId, it.title, it.movies.size, it.coverUrl) }
     )
 
@@ -88,7 +97,9 @@ data class ImportPreview(
     val watchlist: Int,
     val favorites: Int,
     val logs: Int,
-    val lists: List<ImportPreviewList>
+    val lists: List<ImportPreviewList>,
+    // Reviews that become the review of the movie's rating.
+    val reviews: Int = 0
 )
 
 @Serializable
@@ -113,7 +124,8 @@ data class ImportCounts(
     val logs: Int = 0,
     val unmatched: Int = 0,
     // Movies already owned by the user in the Muuvie, left as they were.
-    val keptFromMuuvie: Int = 0
+    val keptFromMuuvie: Int = 0,
+    val reviews: Int = 0
 )
 
 @Serializable
