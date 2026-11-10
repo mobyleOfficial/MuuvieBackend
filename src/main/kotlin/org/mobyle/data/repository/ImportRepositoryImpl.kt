@@ -40,8 +40,9 @@ class ImportRepositoryImpl(private val importDataSource: ImportDataSource) : Imp
         bundle: ImportBundle,
         options: ImportOptions,
         unmatched: Map<String, List<MovieCandidate>>,
+        onWritten: (movieDbIds: Collection<Long>) -> Unit,
         onProgress: (processed: Int, total: Int) -> Unit
-    ): ImportCounts = importDataSource.write(job, bundle, options, unmatched, onProgress)
+    ): ImportCounts = importDataSource.write(job, bundle, options, unmatched, onWritten, onProgress)
 
     override fun finish(jobId: Long, counts: ImportCounts) = importDataSource.finish(jobId, counts)
 

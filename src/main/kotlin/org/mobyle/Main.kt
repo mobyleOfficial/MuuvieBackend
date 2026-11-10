@@ -22,7 +22,9 @@ import org.mobyle.domain.model.ApiError
 import org.mobyle.domain.model.ConflictException
 import org.mobyle.domain.model.DomainException
 import org.mobyle.domain.model.ForbiddenException
+import org.mobyle.domain.model.InvalidFileException
 import org.mobyle.domain.model.NotFoundException
+import org.mobyle.domain.model.PayloadTooLargeException
 import org.mobyle.domain.model.TooManyRequestsException
 import org.mobyle.domain.model.UnavailableException
 import org.mobyle.domain.model.ValidationException
@@ -123,6 +125,8 @@ fun Application.configureStatusPages() {
                 is ConflictException -> HttpStatusCode.Conflict
                 is UnavailableException -> HttpStatusCode.ServiceUnavailable
                 is TooManyRequestsException -> HttpStatusCode.TooManyRequests
+                is InvalidFileException -> HttpStatusCode.BadRequest
+                is PayloadTooLargeException -> HttpStatusCode.PayloadTooLarge
             }
             val details = (cause as? ValidationException)?.let { mapOf("field" to it.field) }
             call.respond(status, ApiError(cause.code, cause.message.orEmpty(), details))

@@ -21,6 +21,7 @@ import org.mobyle.domain.model.vocabulary.ImportStatus
 import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
 import org.mobyle.domain.repository.ImportSourceReader
+import org.mobyle.domain.repository.LetterboxdFilmLookup
 import org.mobyle.domain.repository.MovieResolver
 import org.mobyle.domain.repository.SocialNotifier
 import org.mobyle.domain.usecase.feed.ActivityPublisher
@@ -36,6 +37,7 @@ class ImportJobRunner(
     private val repository: ImportRepository,
     private val readers: List<ImportSourceReader>,
     private val resolver: MovieResolver,
+    private val letterboxd: LetterboxdFilmLookup,
     private val enrichment: MovieEnrichmentService,
     private val webSocketManager: WebSocketManager,
     private val activities: ActivityPublisher,
@@ -78,7 +80,10 @@ class ImportJobRunner(
         val options = job.options ?: ImportOptions()
         val chosen = bundle.withLists(options.listsToImport?.toSet())
         val (matched, unmatched) = match(job.source, chosen.distinctMovies)
-        val counts = repository.write(job, withTmdbIds(chosen, matched), options, unmatched) { processed, total ->
+        var written: Collection<Long> = emptyList()
+        val counts = repository.write(
+            job, withTmdbIds(chosen, matched), options, unmatched, onWritten = { written = it }
+        ) { processed, total ->
             repository.updateProgress(job.id, processed, total)
             scope.launch { notify(job.id) }
         }
@@ -86,7 +91,7 @@ class ImportJobRunner(
         notify(job.id)
         announce(job.id)
         // The imported movies are enriched now instead of waiting for the background loop.
-        enrichment.enrichImported(job.source, chosen.distinctMovies.map { it.externalId })
+        enrichment.enrichImported(written)
         activities.moviesImported(job.userId, job.id, job.source, counts.watched, counts.watchlist)
         log.info("[IMPORT] Job ${job.id} done: $counts")
     }
@@ -105,6 +110,15 @@ class ImportJobRunner(
         for (movie in movies) {
             if (movie.tmdbId != null || movie.imdbUrl != null) continue
             if (repository.knownTmdbId(source, movie.externalId) != null) continue
+            // A Letterboxd film knows its TMDB id: one page read instead of a title search.
+            if (source == ImportSource.LETTERBOXD && movie.externalId.isLetterboxdFilm()) {
+                val tmdbId = letterboxd.tmdbId(movie.externalId)
+                delay(LETTERBOXD_INTERVAL_MS)
+                if (tmdbId != null) {
+                    matched[movie.externalId] = MovieResolution.Matched(tmdbId, MovieMatchMethod.TMDB)
+                    continue
+                }
+            }
             val resolution = try {
                 resolver.resolve(movie)
             } catch (e: CancellationException) {
@@ -189,6 +203,10 @@ class ImportJobRunner(
     private companion object {
         const val MAX_CONCURRENT = 2
         const val SEARCH_INTERVAL_MS = 100L
+        // Gentle on Letterboxd: a 500-movie export takes about two minutes.
+        const val LETTERBOXD_INTERVAL_MS = 250L
+
+        fun String.isLetterboxdFilm(): Boolean = startsWith("https://boxd.it/") || startsWith("https://letterboxd.com/film/")
         const val MESSAGE_TYPE = "import_progress"
         // Shown to the user: never the internal cause.
         const val READ_FAILED = "Could not read the source profile"

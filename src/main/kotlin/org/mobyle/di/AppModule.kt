@@ -102,6 +102,7 @@ import org.mobyle.domain.usecase.imports.GetImports
 import org.mobyle.domain.usecase.imports.GetUnmatchedItems
 import org.mobyle.domain.usecase.imports.ImportAccess
 import org.mobyle.domain.usecase.imports.ResolveUnmatchedItem
+import org.mobyle.domain.usecase.imports.StartFileImport
 import org.mobyle.domain.usecase.imports.StartImport
 import org.mobyle.domain.usecase.auth.LoginUser
 import org.mobyle.domain.usecase.auth.LogoutUser
@@ -362,6 +363,7 @@ val appModule = module {
     // Imports (v1, B3)
     factory { ImportAccess(repository = get()) }
     factory { StartImport(repository = get(), queue = get()) }
+    factory { StartFileImport(repository = get(), reader = get()) }
     factory { GetImport(access = get()) }
     factory { GetImports(repository = get()) }
     factory { ConfirmImport(repository = get(), access = get(), queue = get()) }

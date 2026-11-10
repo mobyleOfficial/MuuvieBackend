@@ -2,6 +2,7 @@ package org.mobyle.domain.repository
 
 import org.mobyle.domain.model.ImportBundle
 import org.mobyle.domain.model.ImportCounts
+import org.mobyle.domain.model.ImportFile
 import org.mobyle.domain.model.ImportJob
 import org.mobyle.domain.model.ImportOptions
 import org.mobyle.domain.model.ImportedMovie
@@ -45,6 +46,8 @@ interface ImportRepository {
         bundle: ImportBundle,
         options: ImportOptions,
         unmatched: Map<String, List<MovieCandidate>>,
+        // The catalog ids of the movies written, for the enrichment right after the import.
+        onWritten: (movieDbIds: Collection<Long>) -> Unit = {},
         onProgress: (processed: Int, total: Int) -> Unit
     ): ImportCounts
     /** Ends the job as done, dropping the stored bundle. */
@@ -66,6 +69,19 @@ interface ImportRepository {
 interface ImportSourceReader {
     val source: ImportSource
     suspend fun read(inputRef: String, credentials: String): ImportBundle
+}
+
+/**
+ * Reads uploaded files (a Filmow CSV in Letterboxd's import format, or Letterboxd's export)
+ * into a neutral bundle. Throws InvalidFileException or PayloadTooLargeException.
+ */
+interface ImportFileReader {
+    fun read(source: ImportSource, files: List<ImportFile>): ImportBundle
+}
+
+/** The TMDB id Letterboxd gives a film, read from its page. Null when unknown, a TV entry or unreachable. */
+interface LetterboxdFilmLookup {
+    suspend fun tmdbId(filmUri: String): Int?
 }
 
 /** Searches TMDB for an imported movie, best candidates first, scored by MovieMatchPolicy. */
