@@ -224,17 +224,33 @@ class ImportDataSourceImplTest {
     }
 
     @Test
-    fun `a review goes to the rating, and needs a label to stay`() {
+    fun `a review goes to the rating, or without one to the session it was written for`() {
         val reviewed = vertigo.copy(stars = 4.0, review = "  Que final.  ")
-        val unrated = psycho.copy(review = "Sem nota")
+        val unrated = psycho.copy(
+            review = "Sem nota",
+            reviewOn = LocalDate(2021, 3, 3),
+            watchDates = listOf(LocalDate(2021, 3, 3), LocalDate(2024, 1, 1))
+        )
+        val noSession = ImportedMovie("f-5", "Rope", year = 1948, tmdbId = 103, review = "Sem lugar")
 
-        val counts = runImport(ImportBundle(watched = listOf(reviewed, unrated)), source = ImportSource.LETTERBOXD)
+        val counts = runImport(ImportBundle(watched = listOf(reviewed, unrated, noSession)), source = ImportSource.LETTERBOXD)
 
         val row = watch.getUserMovie("ana", movieId(101))!!
         assertEquals(Rating.LIKED, row.rating)
         assertEquals("Que final.", row.review)
         assertNull(watch.getUserMovie("ana", movieId(102))!!.review)
-        assertEquals(1, counts.reviews)
+        assertEquals("Sem nota", query("SELECT comment FROM watch_logs WHERE movie_id = ${movieId(102)} AND watched_on = '2021-03-03'"))
+        assertEquals(1L, count("SELECT count(*) FROM watch_logs WHERE comment IS NOT NULL"))
+        assertEquals(2, counts.reviews)
+    }
+
+    @Test
+    fun `an undated review without a rating goes to the latest session`() {
+        val unrated = psycho.copy(review = "Revi", watchDates = listOf(LocalDate(2020, 1, 1), LocalDate(2023, 6, 6)))
+
+        runImport(ImportBundle(watched = listOf(unrated)), source = ImportSource.LETTERBOXD)
+
+        assertEquals("2023-06-06", query("SELECT watched_on FROM watch_logs WHERE comment = 'Revi'").toString())
     }
 
     @Test

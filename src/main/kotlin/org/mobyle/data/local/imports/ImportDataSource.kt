@@ -262,9 +262,12 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
             transaction {
                 val id = movieId(movie)
                 if (!upsertUserMovie(userDbId, id, movie, source, SystemShelves.STATUS_WATCHED, false)) kept++
-                if (movie.review != null && hasReview(userDbId, id, movie.review)) reviews++
                 // Every session of the source becomes a log (a Letterboxd diary logs each rewatch).
                 logs += movie.sessionDates.count { date -> upsertLog(userDbId, id, movie, date, source, options.defaultVisibility) }
+                // A review goes to the rating; without a label to hold it, to the session it was written for.
+                if (movie.review != null && (hasReview(userDbId, id, movie.review) || commentSession(userDbId, id, movie))) {
+                    reviews++
+                }
             }
             step()
         }
@@ -393,6 +396,29 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         UserMoviesTable.select(UserMoviesTable.review)
             .where { (UserMoviesTable.userId eq userDbId) and (UserMoviesTable.movieId eq movieDbId) }
             .firstOrNull()?.get(UserMoviesTable.review) == review.trim().take(REVIEW_MAX_LENGTH)
+
+    /**
+     * Puts a review that has no rating to hold it on an imported session: the one of the review's
+     * date (on Letterboxd every review belongs to a diary entry), else the latest. Without any
+     * imported session there is nowhere to put it. Returns whether it was kept.
+     */
+    private fun commentSession(userDbId: Long, movieDbId: Long, movie: ImportedMovie): Boolean {
+        val comment = movie.review?.trim()?.takeIf { it.isNotEmpty() }?.take(COMMENT_MAX_LENGTH) ?: return false
+        val imported = WatchLogsTable.select(WatchLogsTable.id, WatchLogsTable.watchedOn)
+            .where {
+                (WatchLogsTable.userId eq userDbId) and (WatchLogsTable.movieId eq movieDbId) and
+                    WatchLogsTable.importSource.isNotNull()
+            }
+            .map { it[WatchLogsTable.id].value to it[WatchLogsTable.watchedOn] }
+        val target = imported.firstOrNull { (_, watchedOn) -> watchedOn == movie.reviewOn }
+            ?: imported.maxByOrNull { (id, watchedOn) -> watchedOn.toEpochDays().toLong() * Int.MAX_VALUE + id }
+            ?: return false
+        WatchLogsTable.update({ WatchLogsTable.id eq target.first }) {
+            it[WatchLogsTable.comment] = comment
+            it[updatedAt] = Clock.System.now()
+        }
+        return true
+    }
 
     /**
      * One user_movies row per pair. A row the user owns (source manual) keeps everything and
@@ -654,6 +680,8 @@ class ImportDataSourceImpl(private val catalog: MovieCatalogDataSource) : Import
         const val RESOLUTION_MATCHED = "matched"
         // Same limit as a review written in the app (SetMovieRating).
         const val REVIEW_MAX_LENGTH = 10_000
+        // Same limit as a session comment written in the app (WatchLogInput).
+        const val COMMENT_MAX_LENGTH = 5_000
         const val RESOLUTION_SKIPPED = "skipped"
         const val PROGRESS_EVERY = 25
         const val NAME_MAX = 255

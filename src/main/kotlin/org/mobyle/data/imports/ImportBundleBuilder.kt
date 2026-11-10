@@ -75,6 +75,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             stars = ImportCells.stars(table.value(row, "rating")) ?: ImportCells.starsFromTen(table.value(row, "rating10")),
             watchedOn = ImportCells.date(table.value(row, "watcheddate")),
             review = table.value(row, "review"),
+            reviewOn = ImportCells.date(table.value(row, "watcheddate")),
             tmdbId = tmdbId,
             matchMethod = tmdbId?.let { MovieMatchMethod.TMDB.wireValue }
         )
@@ -108,7 +109,8 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
                 watchedOn = watchedOn,
                 watchDates = listOfNotNull(watchedOn),
                 stars = existing.stars ?: ImportCells.stars(table.value(row, "rating")),
-                review = if (withReview) table.value(row, "review") else null
+                review = if (withReview) table.value(row, "review") else null,
+                reviewOn = if (withReview) watchedOn else null
             )
         )
     }
@@ -125,6 +127,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             watchDates = (existing.watchDates + listOfNotNull(existing.watchedOn, movie.watchedOn) + movie.watchDates)
                 .distinct().sorted(),
             review = movie.review ?: existing.review,
+            reviewOn = if (movie.review != null) movie.reviewOn else existing.reviewOn,
             tmdbId = existing.tmdbId ?: movie.tmdbId,
             matchMethod = existing.matchMethod ?: movie.matchMethod
         )

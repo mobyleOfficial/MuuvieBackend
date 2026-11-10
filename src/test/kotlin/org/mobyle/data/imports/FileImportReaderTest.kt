@@ -167,6 +167,7 @@ class FileImportReaderTest {
         val watched = reader.read(ImportSource.LETTERBOXD, listOf(export)).watched.associateBy { it.title }
 
         assertEquals("Even better", watched.getValue("Past Lives").review)
+        assertEquals(LocalDate(2024, 2, 28), watched.getValue("Past Lives").reviewOn)
         assertEquals(1, reader.read(ImportSource.LETTERBOXD, listOf(export)).preview().reviews)
     }
 

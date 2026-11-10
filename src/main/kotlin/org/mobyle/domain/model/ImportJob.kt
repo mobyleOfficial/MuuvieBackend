@@ -32,8 +32,10 @@ data class ImportedMovie(
     val watchedOn: LocalDate? = null,
     // Every session the source has (a Letterboxd diary logs rewatches); each becomes a watch log.
     val watchDates: List<LocalDate> = emptyList(),
-    // The user's review on the source; it goes to the rating, as the Muuvie keeps one per movie.
+    // The user's review on the source. With a rating it is the rating's review (one per movie);
+    // without one it is the comment of the session of [reviewOn], or of the latest session.
     val review: String? = null,
+    val reviewOn: LocalDate? = null,
     // Set by the matcher before writing, when TMDB matched with confidence.
     val tmdbId: Int? = null,
     // MovieMatchMethod wire value of that match.
