@@ -163,6 +163,47 @@ class FileImportReaderTest {
     }
 
     @Test
+    fun `two diary entries on one day are two sessions, and reviews add none`() {
+        val diary = csv(
+            "diary.csv",
+            "Date,Name,Year,Letterboxd URI,Rating,Rewatch,Tags,Watched Date\n" +
+                "2024-01-05,Vertigo,1958,https://boxd.it/e1,,,,2024-01-05\n" +
+                "2024-01-05,Vertigo,1958,https://boxd.it/e2,,Yes,,2024-01-05\n"
+        )
+        val reviews = csv(
+            "reviews.csv",
+            "Date,Name,Year,Letterboxd URI,Rating,Rewatch,Review,Tags,Watched Date\n" +
+                "2024-01-05,Vertigo,1958,https://boxd.it/e2,,Yes,De novo,,2024-01-05\n"
+        )
+
+        val vertigo = reader.read(ImportSource.LETTERBOXD, listOf(diary, reviews)).watched.single()
+
+        assertEquals(listOf(LocalDate(2024, 1, 5), LocalDate(2024, 1, 5)), vertigo.sessionDates)
+        assertEquals("De novo", vertigo.review)
+    }
+
+    @Test
+    fun `tags become optional lists, left out unless chosen`() {
+        val diary = csv(
+            "diary.csv",
+            "Date,Name,Year,Letterboxd URI,Rating,Rewatch,Tags,Watched Date\n" +
+                "2024-01-05,Vertigo,1958,https://boxd.it/e1,,,\"cinema, Hitchcock\",2024-01-05\n" +
+                "2024-02-05,Psycho,1960,https://boxd.it/e2,,,Cinema,2024-02-05\n"
+        )
+
+        val bundle = reader.read(ImportSource.LETTERBOXD, listOf(diary))
+
+        val cinema = bundle.lists.single { it.externalId == "tag:cinema" }
+        assertEquals("#cinema", cinema.title)
+        assertTrue(cinema.optional)
+        assertEquals(listOf("Vertigo", "Psycho"), cinema.movies.map { it.title })
+        assertEquals(listOf("#cinema", "#Hitchcock"), bundle.lists.map { it.title })
+        assertTrue(bundle.preview().lists.all { it.optional })
+        assertTrue(bundle.withLists(null).lists.isEmpty())
+        assertEquals(listOf("#Hitchcock"), bundle.withLists(setOf("tag:hitchcock")).lists.map { it.title })
+    }
+
+    @Test
     fun `reviews join their movie and the latest one wins`() {
         val watched = reader.read(ImportSource.LETTERBOXD, listOf(export)).watched.associateBy { it.title }
 

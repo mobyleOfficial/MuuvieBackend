@@ -370,17 +370,6 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
         }
     }
 
-    override fun findDbIdsByLetterboxdIds(letterboxdIds: Collection<String>): List<Long> {
-        if (letterboxdIds.isEmpty()) return emptyList()
-        return transaction {
-            letterboxdIds.distinct().chunked(QUERY_CHUNK).flatMap { chunk ->
-                MoviesTable.select(MoviesTable.id)
-                    .where { MoviesTable.letterboxdId inList chunk }
-                    .map { it[MoviesTable.id].value }
-            }
-        }
-    }
-
     override fun findDbIdsByFilmowIds(filmowIds: Collection<String>): List<Long> {
         if (filmowIds.isEmpty()) return emptyList()
         return transaction {

@@ -46,6 +46,8 @@ interface ImportRepository {
         bundle: ImportBundle,
         options: ImportOptions,
         unmatched: Map<String, List<MovieCandidate>>,
+        // The catalog ids of the movies written, for the enrichment right after the import.
+        onWritten: (movieDbIds: Collection<Long>) -> Unit = {},
         onProgress: (processed: Int, total: Int) -> Unit
     ): ImportCounts
     /** Ends the job as done, dropping the stored bundle. */
@@ -75,6 +77,11 @@ interface ImportSourceReader {
  */
 interface ImportFileReader {
     fun read(source: ImportSource, files: List<ImportFile>): ImportBundle
+}
+
+/** The TMDB id Letterboxd gives a film, read from its page. Null when unknown, a TV entry or unreachable. */
+interface LetterboxdFilmLookup {
+    suspend fun tmdbId(filmUri: String): Int?
 }
 
 /** Searches TMDB for an imported movie, best candidates first, scored by MovieMatchPolicy. */

@@ -30,7 +30,8 @@ data class ImportedMovie(
     val stars: Double? = null,
     // The latest watch; the date of the movie on "Já assisti".
     val watchedOn: LocalDate? = null,
-    // Every session the source has (a Letterboxd diary logs rewatches); each becomes a watch log.
+    // Every session the source has, one entry per session (a Letterboxd diary logs rewatches,
+    // sometimes twice on one day); each becomes a watch log.
     val watchDates: List<LocalDate> = emptyList(),
     // The user's review on the source. With a rating it is the rating's review (one per movie);
     // without one it is the comment of the session of [reviewOn], or of the latest session.
@@ -41,8 +42,8 @@ data class ImportedMovie(
     // MovieMatchMethod wire value of that match.
     val matchMethod: String? = null
 ) {
-    /** The dates that become watch logs, oldest first. */
-    val sessionDates: List<LocalDate> get() = (watchDates + listOfNotNull(watchedOn)).distinct().sorted()
+    /** The dates that become watch logs, oldest first; a date twice is two sessions that day. */
+    val sessionDates: List<LocalDate> get() = watchDates.ifEmpty { listOfNotNull(watchedOn) }.sorted()
 
     companion object {
         /** Prefix of [externalId]s made from the title and year, which are not ids on the source. */
@@ -60,7 +61,9 @@ data class ImportedList(
     val title: String,
     val description: String? = null,
     val coverUrl: String? = null,
-    val movies: List<ImportedMovie> = emptyList()
+    val movies: List<ImportedMovie> = emptyList(),
+    // A list the user opts into (a Letterboxd tag): left out unless chosen on the preview.
+    val optional: Boolean = false
 )
 
 /**
@@ -84,12 +87,12 @@ data class ImportBundle(
         favorites = favorites.size,
         logs = watched.sumOf { it.sessionDates.size },
         reviews = watched.count { it.review != null },
-        lists = lists.map { ImportPreviewList(it.externalId, it.title, it.movies.size, it.coverUrl) }
+        lists = lists.map { ImportPreviewList(it.externalId, it.title, it.movies.size, it.coverUrl, it.optional) }
     )
 
-    /** Keeps only the chosen lists (by external id); null keeps all. */
+    /** Keeps only the chosen lists (by external id); null keeps every list that is not optional. */
     fun withLists(externalIds: Set<String>?): ImportBundle =
-        if (externalIds == null) this else copy(lists = lists.filter { it.externalId in externalIds })
+        copy(lists = lists.filter { if (externalIds == null) !it.optional else it.externalId in externalIds })
 }
 
 /** F3.5: what the import is about to write. */
@@ -105,7 +108,14 @@ data class ImportPreview(
 )
 
 @Serializable
-data class ImportPreviewList(val externalId: String, val title: String, val movieCount: Int, val coverUrl: String? = null)
+data class ImportPreviewList(
+    val externalId: String,
+    val title: String,
+    val movieCount: Int,
+    val coverUrl: String? = null,
+    // Unchecked at first on the preview (a Letterboxd tag).
+    val optional: Boolean = false
+)
 
 /** What the user chose on the preview. */
 @Serializable

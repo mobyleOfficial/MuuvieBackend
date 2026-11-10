@@ -22,6 +22,9 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
     // Title key → external id of a watched movie, for the diary join.
     private val watchedByTitle = HashMap<String, String>()
 
+    // Tag (lowercase) → its first spelling and the external ids of its movies, in order.
+    private val tags = LinkedHashMap<String, Pair<String, LinkedHashSet<String>>>()
+
     fun build(files: List<Pair<ImportCsvKind, ImportCsvFile>>): ImportBundle {
         for (kind in APPLY_ORDER) {
             files.filter { it.first == kind }.forEach { (_, file) -> apply(kind, file) }
@@ -30,8 +33,26 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             watched = watched.values.toList(),
             watchlist = watchlist.values.toList(),
             favorites = favorites.values.toList(),
-            lists = lists
+            lists = lists + tagLists()
         )
+    }
+
+    /** Each tag is an optional list: "#cinema", unchecked on the preview until the user picks it. */
+    private fun tagLists(): List<ImportedList> = tags.map { (key, entry) ->
+        val (name, externalIds) = entry
+        ImportedList(
+            externalId = "$TAG_LIST_PREFIX$key",
+            title = "#$name",
+            movies = externalIds.mapNotNull { watched[it] },
+            optional = true
+        )
+    }.filter { it.movies.isNotEmpty() }
+
+    /** Letterboxd writes the tags of an entry comma-separated in one cell. */
+    private fun addTags(externalId: String, cell: String?) {
+        cell?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.forEach { tag ->
+            tags.getOrPut(tag.lowercase()) { tag to LinkedHashSet() }.second.add(externalId)
+        }
     }
 
     private fun apply(kind: ImportCsvKind, file: ImportCsvFile) {
@@ -42,7 +63,10 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
         val table = CsvTable(file.rows.first(), file.rows.drop(1))
         for (row in table.rows) {
             when (kind) {
-                ImportCsvKind.IMPORT_FORMAT -> importFormatMovie(table, row)?.let(::mergeWatched)
+                ImportCsvKind.IMPORT_FORMAT -> importFormatMovie(table, row)?.let { movie ->
+                    mergeWatched(movie)
+                    addTags(movie.externalId, table.value(row, "tags"))
+                }
                 ImportCsvKind.WATCHED -> exportMovie(table, row)?.let(::mergeWatched)
                 ImportCsvKind.RATINGS -> exportMovie(table, row)
                     ?.let { it.copy(stars = ImportCells.stars(table.value(row, "rating"))) }
@@ -76,6 +100,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             watchedOn = ImportCells.date(table.value(row, "watcheddate")),
             review = table.value(row, "review"),
             reviewOn = ImportCells.date(table.value(row, "watcheddate")),
+            watchDates = listOfNotNull(ImportCells.date(table.value(row, "watcheddate"))),
             tmdbId = tmdbId,
             matchMethod = tmdbId?.let { MovieMatchMethod.TMDB.wireValue }
         )
@@ -107,12 +132,14 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
         mergeWatched(
             existing.copy(
                 watchedOn = watchedOn,
-                watchDates = listOfNotNull(watchedOn),
+                // A review is a diary entry already counted from diary.csv: it adds no session.
+                watchDates = if (withReview) emptyList() else listOfNotNull(watchedOn),
                 stars = existing.stars ?: ImportCells.stars(table.value(row, "rating")),
                 review = if (withReview) table.value(row, "review") else null,
                 reviewOn = if (withReview) watchedOn else null
             )
         )
+        addTags(externalId, table.value(row, "tags"))
     }
 
     /** Several rows of one movie (rewatches, a rating after the watch) become one, keeping the latest date. */
@@ -124,8 +151,8 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
             imdbUrl = existing.imdbUrl ?: movie.imdbUrl,
             stars = movie.stars ?: existing.stars,
             watchedOn = ImportCells.latest(existing.watchedOn, movie.watchedOn),
-            watchDates = (existing.watchDates + listOfNotNull(existing.watchedOn, movie.watchedOn) + movie.watchDates)
-                .distinct().sorted(),
+            // Every entry is a session, two on the same day included.
+            watchDates = (existing.watchDates + movie.watchDates).sorted(),
             review = movie.review ?: existing.review,
             reviewOn = if (movie.review != null) movie.reviewOn else existing.reviewOn,
             tmdbId = existing.tmdbId ?: movie.tmdbId,
@@ -163,6 +190,7 @@ internal class ImportBundleBuilder(private val acceptLetterboxdUris: Boolean) {
     }
 
     private companion object {
+        const val TAG_LIST_PREFIX = "tag:"
         val APPLY_ORDER = listOf(
             ImportCsvKind.WATCHED,
             ImportCsvKind.IMPORT_FORMAT,

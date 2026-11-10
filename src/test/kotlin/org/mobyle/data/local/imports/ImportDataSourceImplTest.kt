@@ -243,6 +243,48 @@ class ImportDataSourceImplTest {
     }
 
     @Test
+    fun `two sessions on one day are two logs, and a reimport adds none`() {
+        val twice = casablanca.copy(watchDates = listOf(LocalDate(2024, 1, 5), LocalDate(2024, 1, 5)))
+
+        val counts = runImport(ImportBundle(watched = listOf(twice)), source = ImportSource.LETTERBOXD)
+        runImport(ImportBundle(watched = listOf(twice)), source = ImportSource.LETTERBOXD)
+
+        assertEquals(2, counts.logs)
+        assertEquals("1,2", query("SELECT string_agg(cycle::text, ',' ORDER BY cycle) FROM watch_logs"))
+    }
+
+    @Test
+    fun `a placeholder a year apart is the same movie`() {
+        runImport(ImportBundle(watched = listOf(obscure)))
+        runImport(
+            ImportBundle(watched = listOf(ImportedMovie(ImportedMovie.titleKey("Filme Raro", 1972), "Filme Raro", year = 1972))),
+            source = ImportSource.LETTERBOXD
+        )
+
+        assertEquals(1L, count("SELECT count(*) FROM movies WHERE title = 'Filme Raro'"))
+    }
+
+    @Test
+    fun `optional lists are written only when chosen, and the written movies are reported`() {
+        val tag = ImportedList("tag:cinema", "#cinema", movies = listOf(vertigo), optional = true)
+        val withTag = ImportBundle(watched = listOf(vertigo), lists = listOf(tag))
+        var written: Collection<Long> = emptyList()
+
+        runImport(withTag, source = ImportSource.LETTERBOXD)
+        assertEquals(0L, count("SELECT count(*) FROM shelves WHERE external_id = 'tag:cinema'"))
+
+        val job = imports.createJob("ana", ImportSource.LETTERBOXD, "ana")!!
+        imports.transition(job.id, setOf(ImportStatus.PENDING), ImportStatus.READING, null)
+        imports.saveRead(job.id, withTag)
+        val options = ImportOptions(listsToImport = listOf("tag:cinema"))
+        imports.confirm(job.id, options)
+        imports.write(imports.getJob(job.id)!!, withTag, options, emptyMap(), onWritten = { written = it }) { _, _ -> }
+
+        assertEquals(1L, count("SELECT count(*) FROM shelves WHERE external_id = 'tag:cinema'"))
+        assertEquals(listOf(movieId(101)), written.toList())
+    }
+
+    @Test
     fun `cycles the user owns are left alone`() {
         execute("INSERT INTO movies (id, tmdb_id, title) VALUES (50, 100, 'Casablanca');")
         watch.setRating("ana", 50, Rating.LOVED, null, false)

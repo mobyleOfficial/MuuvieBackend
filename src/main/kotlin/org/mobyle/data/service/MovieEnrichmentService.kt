@@ -83,15 +83,10 @@ class MovieEnrichmentService(
     }
 
     /** The movies of an import, ahead of the background loop. */
-    fun enrichImported(source: ImportSource, externalIds: Collection<String>) {
-        // Movies keyed by title and year have no source id to look up; the background loop gets them.
-        val sourceIds = externalIds.filterNot { it.startsWith(ImportedMovie.TITLE_KEY_PREFIX) }
-        if (sourceIds.isEmpty()) return
+    fun enrichImported(dbIds: Collection<Long>) {
+        // The catalog ids the writer used, so every source and the movies keyed by title alike.
+        if (dbIds.isEmpty()) return
         scope.launch {
-            val dbIds = when (source) {
-                ImportSource.FILMOW -> catalogDataSource.findDbIdsByFilmowIds(sourceIds)
-                ImportSource.LETTERBOXD -> catalogDataSource.findDbIdsByLetterboxdIds(sourceIds)
-            }
             val pending = catalogDataSource.getEnrichmentCandidates(dbIds).filter { it.needsEnrichment && !it.unmatched }
             log.info("[ENRICHMENT] Import: ${pending.size} of ${dbIds.size} movies to enrich")
             for (candidate in pending) {

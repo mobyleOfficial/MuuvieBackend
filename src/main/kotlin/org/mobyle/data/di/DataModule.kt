@@ -73,6 +73,7 @@ import org.mobyle.domain.repository.ImportFileReader
 import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
 import org.mobyle.data.imports.FileImportReader
+import org.mobyle.data.remote.letterboxd.LetterboxdFilmDataSource
 import org.mobyle.data.local.imports.ImportDataSource
 import org.mobyle.data.local.imports.ImportDataSourceImpl
 import org.mobyle.data.repository.FilmowImportReader
@@ -332,6 +333,7 @@ val dataModule = module {
             repository = get(),
             readers = listOf(FilmowImportReader(filmowDataSource = get(), catalog = get())),
             resolver = get(),
+            letterboxd = LetterboxdFilmDataSource(),
             enrichment = get(),
             webSocketManager = get(),
             activities = get(),
