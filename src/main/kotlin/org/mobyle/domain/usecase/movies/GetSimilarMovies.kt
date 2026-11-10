@@ -1,0 +1,59 @@
+package org.mobyle.domain.usecase.movies
+
+import kotlinx.coroutines.runBlocking
+import org.mobyle.domain.model.Movie
+import org.mobyle.domain.model.MovieTraits
+import org.mobyle.domain.model.NotFoundException
+import org.mobyle.domain.model.SimilarMovies
+import org.mobyle.domain.policy.ReadableTitle
+import org.mobyle.domain.repository.MoviesRepository
+
+/**
+ * The similar movies of one catalog movie, without the rest of its detail, sorted by how similar
+ * they are (see [SimilarityScorer]): the payload the Universo de Filmes fetches on every jump
+ * (research/features/movie-universe/roadmap.md).
+ */
+class GetSimilarMovies(private val repository: MoviesRepository) {
+    operator fun invoke(movieId: Long): SimilarMovies = runBlocking {
+        val fetched = repository.getSimilarMovies(movieId) ?: throw NotFoundException("Movie not found")
+        if (fetched.isEmpty()) return@runBlocking SimilarMovies(movieId = movieId, results = emptyList())
+        val similarMovies = withReadableTitles(fetched)
+
+        val similarMovieIds = similarMovies.map { movie -> movie.id }
+        val traitsById = repository.getMovieTraits(similarMovieIds + movieId)
+        // Movies with nothing saved score by rank only: have them enriched sooner, so the next
+        // visit to this system scores them for real.
+        val unknown = similarMovieIds.filter { id -> id !in traitsById }
+        if (unknown.isNotEmpty()) repository.enrichAhead(unknown)
+        val affinities = SimilarityScorer.score(
+            source = traitsById[movieId] ?: MovieTraits(),
+            similarMovieIds = similarMovieIds,
+            traitsById = traitsById
+        )
+
+        // Stable sort: equal scores keep TMDB's order.
+        val ranked = similarMovies.zip(affinities).sortedByDescending { (_, affinity) -> affinity.score }
+        SimilarMovies(
+            movieId = movieId,
+            results = ranked.map { (movie, _) -> movie },
+            affinities = ranked.map { (_, affinity) -> affinity }
+        )
+    }
+
+    /**
+     * Swaps titles the app cannot read (an untranslated Japanese movie, say) for the English ones.
+     * Rare, and saved once found, so at most [MAX_RETITLED] lookups per call.
+     */
+    private suspend fun withReadableTitles(movies: List<Movie>): List<Movie> {
+        val unreadable = movies.filter { movie -> !ReadableTitle.isReadable(movie.title) }
+            .take(MAX_RETITLED)
+            .map { movie -> movie.id }
+        if (unreadable.isEmpty()) return movies
+        val titles = repository.readableTitles(unreadable)
+        return movies.map { movie -> titles[movie.id]?.let { title -> movie.copy(title = title) } ?: movie }
+    }
+
+    private companion object {
+        const val MAX_RETITLED = 3
+    }
+}
