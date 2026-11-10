@@ -16,6 +16,12 @@ private val catalogLog = LoggerFactory.getLogger(MovieCatalogDataSourceImpl::cla
 
 class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
+    override fun updateTitle(id: Long, title: String) {
+        transaction {
+            MoviesTable.update({ MoviesTable.id eq id }) { it[MoviesTable.title] = title }
+        }
+    }
+
     override fun findById(id: Long): Movie? {
         return transaction {
             MoviesTable.selectAll()

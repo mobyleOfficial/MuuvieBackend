@@ -10,6 +10,8 @@ import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 
 interface MovieCatalogDataSource {
     fun findById(id: Long): Movie?
+    /** Replaces the title of the catalog movie [id]; the original title stays as it was. */
+    fun updateTitle(id: Long, title: String)
     fun findByTmdbId(tmdbId: Int): Movie?
     fun findByFilmowId(filmowId: String): Movie?
     fun findByLetterboxdId(letterboxdId: String): Movie?

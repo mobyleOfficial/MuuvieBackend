@@ -54,6 +54,29 @@ class GetSimilarMoviesTest {
     }
 
     @Test
+    fun `a title the app cannot read is swapped for the readable one, and readable ones are not looked up`() {
+        val underYourBed = Movie(id = 4, tmdbId = 40, title = "アンダー・ユア・ベッド")
+        coEvery { repository.getSimilarMovies(1) } returns listOf(alien, underYourBed)
+        coEvery { repository.getMovieTraits(any()) } returns emptyMap()
+        coEvery { repository.readableTitles(listOf(4L)) } returns mapOf(4L to "Under Your Bed")
+
+        val result = getSimilarMovies(1)
+
+        assertEquals(listOf("Alien", "Under Your Bed"), result.results.map { movie -> movie.title })
+        coVerify(exactly = 1) { repository.readableTitles(listOf(4L)) }
+    }
+
+    @Test
+    fun `without a readable title anywhere the original stays`() {
+        val underYourBed = Movie(id = 4, tmdbId = 40, title = "アンダー・ユア・ベッド")
+        coEvery { repository.getSimilarMovies(1) } returns listOf(underYourBed)
+        coEvery { repository.getMovieTraits(any()) } returns emptyMap()
+        coEvery { repository.readableTitles(any()) } returns emptyMap()
+
+        assertEquals("アンダー・ユア・ベッド", getSimilarMovies(1).results.single().title)
+    }
+
+    @Test
     fun `a movie without similar movies answers an empty list without reading traits`() {
         coEvery { repository.getSimilarMovies(1) } returns emptyList()
 

@@ -1,9 +1,11 @@
 package org.mobyle.domain.usecase.movies
 
 import kotlinx.coroutines.runBlocking
+import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.MovieTraits
 import org.mobyle.domain.model.NotFoundException
 import org.mobyle.domain.model.SimilarMovies
+import org.mobyle.domain.policy.ReadableTitle
 import org.mobyle.domain.repository.MoviesRepository
 
 /**
@@ -13,8 +15,9 @@ import org.mobyle.domain.repository.MoviesRepository
  */
 class GetSimilarMovies(private val repository: MoviesRepository) {
     operator fun invoke(movieId: Long): SimilarMovies = runBlocking {
-        val similarMovies = repository.getSimilarMovies(movieId) ?: throw NotFoundException("Movie not found")
-        if (similarMovies.isEmpty()) return@runBlocking SimilarMovies(movieId = movieId, results = emptyList())
+        val fetched = repository.getSimilarMovies(movieId) ?: throw NotFoundException("Movie not found")
+        if (fetched.isEmpty()) return@runBlocking SimilarMovies(movieId = movieId, results = emptyList())
+        val similarMovies = withReadableTitles(fetched)
 
         val similarMovieIds = similarMovies.map { movie -> movie.id }
         val traitsById = repository.getMovieTraits(similarMovieIds + movieId)
@@ -35,5 +38,22 @@ class GetSimilarMovies(private val repository: MoviesRepository) {
             results = ranked.map { (movie, _) -> movie },
             affinities = ranked.map { (_, affinity) -> affinity }
         )
+    }
+
+    /**
+     * Swaps titles the app cannot read (an untranslated Japanese movie, say) for the English ones.
+     * Rare, and saved once found, so at most [MAX_RETITLED] lookups per call.
+     */
+    private suspend fun withReadableTitles(movies: List<Movie>): List<Movie> {
+        val unreadable = movies.filter { movie -> !ReadableTitle.isReadable(movie.title) }
+            .take(MAX_RETITLED)
+            .map { movie -> movie.id }
+        if (unreadable.isEmpty()) return movies
+        val titles = repository.readableTitles(unreadable)
+        return movies.map { movie -> titles[movie.id]?.let { title -> movie.copy(title = title) } ?: movie }
+    }
+
+    private companion object {
+        const val MAX_RETITLED = 3
     }
 }

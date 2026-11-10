@@ -19,6 +19,12 @@ interface MoviesRepository {
      * loop, so their genres and keywords come sooner. Returns at once; the work runs apart.
      */
     fun enrichAhead(movieIds: Collection<Long>)
+    /**
+     * A readable title for each catalog movie of [movieIds] whose title is not in Latin script
+     * (see ReadableTitle): the one saved when it already is, else the English one from TMDB, which
+     * is then saved. Movies with no readable title anywhere are left out.
+     */
+    suspend fun readableTitles(movieIds: Collection<Long>): Map<Long, String>
     suspend fun searchMovies(query: String, page: Int): MovieListing
     suspend fun discoverMovies(
         page: Int,

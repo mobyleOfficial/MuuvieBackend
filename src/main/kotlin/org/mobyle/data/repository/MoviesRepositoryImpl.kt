@@ -10,6 +10,7 @@ import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.remote.tmdb.toDomain
 import org.mobyle.data.service.MovieEnrichmentService
 import org.mobyle.domain.model.*
+import org.mobyle.domain.policy.ReadableTitle
 import org.mobyle.domain.repository.MoviesRepository
 import org.mobyle.model.MovieListing
 import org.slf4j.LoggerFactory
@@ -122,6 +123,27 @@ class MoviesRepositoryImpl(
         movieCatalogDataSource.getMovieTraits(movieIds)
 
     override fun enrichAhead(movieIds: Collection<Long>) = enrichmentService.enrichAhead(movieIds)
+
+    override suspend fun readableTitles(movieIds: Collection<Long>): Map<Long, String> = buildMap {
+        for (movieId in movieIds) {
+            val movie = movieCatalogDataSource.findById(movieId) ?: continue
+            if (ReadableTitle.isReadable(movie.title)) {
+                put(movieId, movie.title)
+                continue
+            }
+            val tmdbId = movie.tmdbId ?: continue
+            // getMovieFacts asks TMDB in en-US.
+            val englishTitle = try {
+                tmdbDataSource.getMovieFacts(tmdbId).title
+            } catch (e: Exception) {
+                log.warn("TMDB English title failed for tmdbId=$tmdbId: ${e.message}")
+                null
+            }
+            if (englishTitle.isNullOrBlank() || !ReadableTitle.isReadable(englishTitle)) continue
+            movieCatalogDataSource.updateTitle(movieId, englishTitle)
+            put(movieId, englishTitle)
+        }
+    }
 
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
         if (currentTmdbId == realTmdbId) return
