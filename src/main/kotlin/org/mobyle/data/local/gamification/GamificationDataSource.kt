@@ -33,6 +33,7 @@ import org.mobyle.data.local.database.GenresTable
 import org.mobyle.data.local.database.MovieGenresTable
 import org.mobyle.data.local.database.MoviesTable
 import org.mobyle.data.local.database.UserMissionsTable
+import org.mobyle.data.local.database.UniverseVisitsTable
 import org.mobyle.data.local.database.UserPetsTable
 import org.mobyle.data.local.database.WatchLogsTable
 import org.mobyle.data.local.database.userDbIdOf
@@ -129,9 +130,27 @@ class GamificationDataSourceImpl : GamificationDataSource {
             cineclubesJoined = CineClubeParticipationsTable.selectAll()
                 .where { CineClubeParticipationsTable.userId eq user }
                 .count().toInt(),
-            missions = UserMissionsTable.selectAll().where { UserMissionsTable.userId eq user }.count().toInt()
+            missions = UserMissionsTable.selectAll().where { UserMissionsTable.userId eq user }.count().toInt(),
+            universeSystems = universeSystemsOf(user)
         )
     }
+
+    override fun addUniverseVisits(userId: String, movieIds: Collection<Long>): Int = transaction {
+        val user = userDbIdOf(userId) ?: return@transaction 0
+        val known = if (movieIds.isEmpty()) emptyList() else MoviesTable.select(MoviesTable.id)
+            .where { MoviesTable.id inList movieIds.distinct() }
+            .map { it[MoviesTable.id] }
+        known.forEach { movie ->
+            UniverseVisitsTable.insertIgnore {
+                it[UniverseVisitsTable.userId] = user
+                it[UniverseVisitsTable.movieId] = movie
+            }
+        }
+        universeSystemsOf(user)
+    }
+
+    private fun universeSystemsOf(user: Long): Int =
+        UniverseVisitsTable.selectAll().where { UniverseVisitsTable.userId eq user }.count().toInt()
 
     override fun weekActivity(userId: String, from: LocalDate, to: LocalDate): WeekActivity = transaction {
         val user = userDbIdOf(userId) ?: return@transaction WeekActivity(0, 0, emptyList(), 0, 0)

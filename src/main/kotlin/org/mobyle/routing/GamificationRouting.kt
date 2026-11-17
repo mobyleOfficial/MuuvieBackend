@@ -21,12 +21,16 @@ import org.mobyle.domain.usecase.gamification.GetDiaryMonth
 import org.mobyle.domain.usecase.gamification.GetDiaryYear
 import org.mobyle.domain.usecase.gamification.GetPetShelter
 import org.mobyle.domain.usecase.gamification.PinPet
+import org.mobyle.domain.usecase.gamification.RecordUniverseVisits
 import org.mobyle.domain.usecase.gamification.SaveDiaryDay
 import org.mobyle.domain.usecase.gamification.WeeklyMissions
 import org.mobyle.domain.usecase.users.ProfileAccess
 
 @Serializable
 data class StarterRequest(val slug: String = "")
+
+@Serializable
+data class UniverseVisitsRequest(val movieIds: List<Long> = emptyList())
 
 /**
  * Bichinhos, missions and the Caderninho of the v1 API (B10). Everything belongs to the
@@ -43,6 +47,14 @@ fun Route.getGamificationRouting() {
     val getDiaryMonth by injection<GetDiaryMonth>()
     val getDiaryYear by injection<GetDiaryYear>()
     val profiles by injection<ProfileAccess>()
+    val recordUniverseVisits by injection<RecordUniverseVisits>()
+
+    // The star systems opened in the Universo de Filmes; unlocks the explorer bichinhos.
+    post("/users/me/universe/visits") {
+        val principal = call.authenticateJWT(validateToken) ?: return@post
+        val request = call.receive<UniverseVisitsRequest>()
+        call.respond(recordUniverseVisits(principal.claims.userId, request.movieIds))
+    }
 
     get("/users/me/pets") {
         val principal = call.authenticateJWT(validateToken) ?: return@get

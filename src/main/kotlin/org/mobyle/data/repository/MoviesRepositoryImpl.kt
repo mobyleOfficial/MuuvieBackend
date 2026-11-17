@@ -10,6 +10,7 @@ import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.remote.tmdb.toDomain
 import org.mobyle.data.service.MovieEnrichmentService
 import org.mobyle.domain.model.*
+import org.mobyle.domain.policy.ReadableTitle
 import org.mobyle.domain.repository.MoviesRepository
 import org.mobyle.model.MovieListing
 import org.slf4j.LoggerFactory
@@ -96,6 +97,54 @@ class MoviesRepositoryImpl(
         return localMovie?.let { movieCatalogDataSource.getLocalMovieDetailByDbId(it.id) }
     }
 
+    override suspend fun getSimilarMovies(movieId: Long): List<Movie>? {
+        val movie = movieCatalogDataSource.findById(movieId) ?: return null
+        // A Filmow placeholder not yet matched to TMDB has no similar movies to ask for.
+        val tmdbId = movie.tmdbId ?: return emptyList()
+
+        val similarsCache = movieCatalogDataSource.getSimilarMovies(tmdbId)
+        if (similarsCache.data.isNotEmpty()) {
+            if (similarsCache.isStale) refreshVolatileData(tmdbId)
+            return similarsCache.data
+        }
+        // TMDB listed none at a check younger than 7 days: no need to ask again.
+        if (!similarsCache.isStale) return emptyList()
+
+        // Never fetched, or the empty answer expired: the detail fetch caches the similars with DB ids.
+        return try {
+            fetchAndCacheDetail(tmdbId).similarMovies
+        } catch (e: Exception) {
+            log.warn("TMDB fetch of similar movies failed for tmdbId=$tmdbId: ${e.message}")
+            emptyList()
+        }
+    }
+
+    override suspend fun getMovieTraits(movieIds: Collection<Long>): Map<Long, MovieTraits> =
+        movieCatalogDataSource.getMovieTraits(movieIds)
+
+    override fun enrichAhead(movieIds: Collection<Long>) = enrichmentService.enrichAhead(movieIds)
+
+    override suspend fun readableTitles(movieIds: Collection<Long>): Map<Long, String> = buildMap {
+        for (movieId in movieIds) {
+            val movie = movieCatalogDataSource.findById(movieId) ?: continue
+            if (ReadableTitle.isReadable(movie.title)) {
+                put(movieId, movie.title)
+                continue
+            }
+            val tmdbId = movie.tmdbId ?: continue
+            // getMovieFacts asks TMDB in en-US.
+            val englishTitle = try {
+                tmdbDataSource.getMovieFacts(tmdbId).title
+            } catch (e: Exception) {
+                log.warn("TMDB English title failed for tmdbId=$tmdbId: ${e.message}")
+                null
+            }
+            if (englishTitle.isNullOrBlank() || !ReadableTitle.isReadable(englishTitle)) continue
+            movieCatalogDataSource.updateTitle(movieId, englishTitle)
+            put(movieId, englishTitle)
+        }
+    }
+
     private fun resolveFilmowPlaceholder(filmowId: String, currentTmdbId: Int?, realTmdbId: Int) {
         if (currentTmdbId == realTmdbId) return
         val dbId = movieCatalogDataSource.getDbIdByFilmowId(filmowId) ?: return
@@ -121,6 +170,13 @@ class MoviesRepositoryImpl(
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     movieCatalogDataSource.enrichMovie(tmdbId, detail, response.credits)
+                    // The keywords come in the same response; saving them lets the universe score this movie's similars.
+                    movieCatalogDataSource.saveMovieFacts(
+                        tmdbId,
+                        response.originalLanguage,
+                        response.productionCountries.mapNotNull { it.iso },
+                        response.keywords?.keywords.orEmpty().map { it.id to (it.name ?: "") }
+                    )
                     movieCatalogDataSource.saveSimilarMovies(tmdbId, similarsWithIds)
                     movieCatalogDataSource.saveWatchProviders(tmdbId, detail.watchProviders)
                 } catch (e: Exception) {

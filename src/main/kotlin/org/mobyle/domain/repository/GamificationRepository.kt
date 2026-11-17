@@ -26,6 +26,12 @@ interface GamificationRepository {
     /** Counts for the unlock rules from the user's own sessions (imports left out). */
     fun petProgress(userId: String, genreIds: Set<Int>, beforeYears: Set<Int>): PetProgress
 
+    /**
+     * Records the star systems of [movieIds] as visited in the Universo de Filmes; ids not in the
+     * catalog and systems already visited are skipped. Answers how many the user visited in all.
+     */
+    fun addUniverseVisits(userId: String, movieIds: Collection<Long>): Int
+
     fun weekActivity(userId: String, from: LocalDate, to: LocalDate): WeekActivity
 
     fun completedMissions(userId: String, weekStart: LocalDate): Map<String, Instant>

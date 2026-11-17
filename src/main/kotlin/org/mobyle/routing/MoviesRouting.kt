@@ -22,6 +22,7 @@ fun Route.getMoviesRouting() {
     val lookupMovieDetail by injection<LookupMovieDetail>()
     val getMovieUserState by injection<GetMovieUserState>()
     val attachMovieStates by injection<AttachMovieStates>()
+    val getSimilarMovies by injection<GetSimilarMovies>()
 
     get("/movies") {
         val id = call.parameters["id"]?.toLongOrNull()
@@ -91,6 +92,14 @@ fun Route.getMoviesRouting() {
 
     get("/movies/languages") {
         call.respond(getLanguages())
+    }
+
+    // Public: only the similar movies of a catalog movie, by its Muuvie id (Universo de Filmes).
+    get("/movies/{id}/similar") {
+        val movieId = call.longParameter("id") ?: return@get
+        val viewerId = call.tryAuthenticateJWT(validateToken)?.claims?.userId
+        val similarMovies = getSimilarMovies(movieId)
+        call.respond(similarMovies.copy(results = attachMovieStates(viewerId, similarMovies.results)))
     }
 
     get("/movies/{id}") {

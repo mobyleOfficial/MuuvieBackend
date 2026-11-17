@@ -16,6 +16,12 @@ private val catalogLog = LoggerFactory.getLogger(MovieCatalogDataSourceImpl::cla
 
 class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
+    override fun updateTitle(id: Long, title: String) {
+        transaction {
+            MoviesTable.update({ MoviesTable.id eq id }) { it[MoviesTable.title] = title }
+        }
+    }
+
     override fun findById(id: Long): Movie? {
         return transaction {
             MoviesTable.selectAll()
@@ -470,6 +476,10 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
                 .firstOrNull()?.get(MoviesTable.id)?.value ?: return@transaction
 
             val now = Clock.System.now()
+            // Recorded even for an empty list: the negative cache of getSimilarMovies.
+            MoviesTable.update({ MoviesTable.id eq movieDbId }) {
+                it[MoviesTable.similarsCheckedAt] = now
+            }
             for (movie in similars) {
                 val similarTmdbId = movie.tmdbId ?: continue
 
@@ -521,23 +531,49 @@ class MovieCatalogDataSourceImpl : MovieCatalogDataSource {
 
     override fun getSimilarMovies(tmdbId: Int): CachedData<List<Movie>> {
         return transaction {
-            val movieDbId = MoviesTable.selectAll()
+            val movieRow = MoviesTable.selectAll()
                 .where { MoviesTable.tmdbId eq tmdbId }
-                .firstOrNull()?.get(MoviesTable.id)?.value
+                .firstOrNull()
                 ?: return@transaction CachedData(emptyList(), isStale = true)
+            val movieDbId = movieRow[MoviesTable.id].value
+            val staleThreshold = Clock.System.now().minus(kotlin.time.Duration.parse("7d"))
 
             val rows = MovieSimilarsTable.selectAll()
                 .where { MovieSimilarsTable.movieId eq movieDbId }
                 .toList()
 
-            if (rows.isEmpty()) return@transaction CachedData(emptyList(), isStale = true)
+            if (rows.isEmpty()) {
+                // TMDB listed none at a recent check: an answer, not a miss.
+                val checkedAt = movieRow[MoviesTable.similarsCheckedAt]
+                return@transaction CachedData(emptyList(), isStale = checkedAt == null || checkedAt < staleThreshold)
+            }
 
             val oldestFetch = rows.minOf { it[MovieSimilarsTable.fetchedAt] }
-            val staleThreshold = Clock.System.now().minus(kotlin.time.Duration.parse("7d"))
             val isStale = oldestFetch < staleThreshold
 
             val movies = resolveSimilarMovies(movieDbId)
             CachedData(movies, isStale)
+        }
+    }
+
+    override fun getMovieTraits(dbIds: Collection<Long>): Map<Long, MovieTraits> {
+        if (dbIds.isEmpty()) return emptyMap()
+        return transaction {
+            val genresByMovie = (MovieGenresTable innerJoin GenresTable)
+                .select(MovieGenresTable.movieId, GenresTable.name)
+                .where { MovieGenresTable.movieId inList dbIds }
+                .groupBy({ row -> row[MovieGenresTable.movieId].value }, { row -> row[GenresTable.name] })
+            val keywordsByMovie = MovieKeywordsTable
+                .select(MovieKeywordsTable.movieId, MovieKeywordsTable.name)
+                .where { MovieKeywordsTable.movieId inList dbIds }
+                .groupBy({ row -> row[MovieKeywordsTable.movieId].value }, { row -> row[MovieKeywordsTable.name] })
+
+            (genresByMovie.keys + keywordsByMovie.keys).associateWith { movieDbId ->
+                MovieTraits(
+                    genres = genresByMovie[movieDbId].orEmpty().toSet(),
+                    keywords = keywordsByMovie[movieDbId].orEmpty().filter { name -> name.isNotBlank() }.toSet()
+                )
+            }
         }
     }
 

@@ -40,6 +40,7 @@ import org.mobyle.domain.usecase.gamification.GetPetShelter
 import org.mobyle.domain.usecase.gamification.PetShelterBuilder
 import org.mobyle.domain.usecase.gamification.PetUnlocker
 import org.mobyle.domain.usecase.gamification.PinPet
+import org.mobyle.domain.usecase.gamification.RecordUniverseVisits
 import org.mobyle.domain.usecase.gamification.SaveDiaryDay
 import org.mobyle.domain.usecase.gamification.WeeklyMissions
 import org.mobyle.domain.usecase.watch.LogWatchSession
@@ -75,6 +76,7 @@ class GamificationDataSourceImplTest {
     private val shelter = GetPetShelter(builder)
     private val choose = ChooseStarterPet(gamification, unlocker, builder, activities)
     private val pin = PinPet(gamification, builder)
+    private val recordVisits = RecordUniverseVisits(gamification, unlocker)
     private val missions = WeeklyMissions(gamification, catalog) { today }
     private val hook = GamificationHook(gamification, missions, unlocker)
     private val logSession = LogWatchSession(WatchRepositoryImpl(WatchDataSourceImpl()), shelves, activities, gamification = hook)
@@ -143,6 +145,28 @@ class GamificationDataSourceImplTest {
         assertEquals("claquete", shelter("ana").pinned?.slug)
         // 1,000 minutes unlock the ingresso.
         assertEquals(listOf("claquete", "dinossauro", "ingresso", "pipoca-doce"), shelter.public("ana").pets.map { it.slug }.sorted())
+    }
+
+    @Test
+    fun `universe systems count once each and unlock the explorer bichinhos`() {
+        choose("ana", "pipoca-doce")
+
+        val first = recordVisits("ana", (101L..109L).toList())
+        assertEquals(9, first.systemsVisited)
+        assertTrue(first.unlockedPets.isEmpty())
+
+        // A system visited again and an id outside the catalog count for nothing.
+        assertEquals(9, recordVisits("ana", listOf(101L, 9_999L)).systemsVisited)
+
+        val tenth = recordVisits("ana", listOf(110L))
+        assertEquals(10, tenth.systemsVisited)
+        assertEquals(listOf("foguete"), tenth.unlockedPets)
+        val astronauta = shelter("ana").pets.single { it.slug == "astronauta" }
+        assertFalse(astronauta.unlocked)
+        assertEquals(10, astronauta.progress)
+        // Another user's universe is their own.
+        assertEquals(0, gamification.petProgress("bia", emptySet(), emptySet()).universeSystems)
+        assertFailsWith<ValidationException> { recordVisits("ana", emptyList()) }
     }
 
     @Test

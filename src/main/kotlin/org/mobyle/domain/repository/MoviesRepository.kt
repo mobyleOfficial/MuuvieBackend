@@ -7,6 +7,24 @@ interface MoviesRepository {
     suspend fun getTrendingMovies(page: Int): MovieListing
     suspend fun getMovieDetail(movieId: Int): MovieDetail
     suspend fun lookupMovieDetail(id: Long?, tmdbId: Int?, filmowId: String?): MovieDetail?
+    /**
+     * The similar movies of the catalog movie [movieId], from the `movie_similars` cache or TMDB.
+     * Null when no such movie exists; empty when it has no TMDB id or TMDB cannot be reached.
+     */
+    suspend fun getSimilarMovies(movieId: Long): List<Movie>?
+    /** The saved genres and keywords of each catalog movie in [movieIds]; movies without any are left out. */
+    suspend fun getMovieTraits(movieIds: Collection<Long>): Map<Long, MovieTraits>
+    /**
+     * Puts the catalog movies of [movieIds] still waiting for enrichment ahead of the background
+     * loop, so their genres and keywords come sooner. Returns at once; the work runs apart.
+     */
+    fun enrichAhead(movieIds: Collection<Long>)
+    /**
+     * A readable title for each catalog movie of [movieIds] whose title is not in Latin script
+     * (see ReadableTitle): the one saved when it already is, else the English one from TMDB, which
+     * is then saved. Movies with no readable title anywhere are left out.
+     */
+    suspend fun readableTitles(movieIds: Collection<Long>): Map<Long, String>
     suspend fun searchMovies(query: String, page: Int): MovieListing
     suspend fun discoverMovies(
         page: Int,

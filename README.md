@@ -122,6 +122,7 @@ All routes are served under `/api/v1` (contract: `research/decisions/api-v1-cont
 
 With a token, `/movies/trending`, `/movies/search`, `/movies/discover` and the `/discover/movies/*` rankings carry `me: { status, rating }` on each movie the viewer has on Já assisti / Quero ver or rated; the field is absent otherwise.
 | GET    | `/movies/{id}`                | Movie details (TMDB id), without the TMDB score. With a token it carries `me`: shelves, situation (`watched`/`want_to_watch`), progress, rating | —                     |
+| GET    | `/movies/{id}/similar`        | Public. Only the similar movies of a movie by its database id, without the rest of the detail: `{ movieId, results, affinities }`. `results` is sorted most similar first; `affinities` has one `{ movieId, score, sharedGenres, sharedKeywords, genres }` per result, in the same order (`genres` are all of the similar movie's own, for filtering), with `score` from 0 to 1 blending TMDB's order with the saved genres and keywords both movies share (rank only, around 0.5, for movies not yet enriched; those are put ahead of the enrichment loop, up to 10 per call). Same source and 7-day cache as `similarMovies` of the detail (up to 10); a movie TMDB lists no similars for is not asked again for 7 days either. A title not in Latin script (TMDB falls back to the original when there is no Portuguese one) is swapped for the English one and saved, up to 3 per call. With a token each movie carries `me`. Empty for an imported movie without TMDB id; 404 for an unknown id | —     |
 | GET    | `/movies`                     | Movie details by `id` (database), `tmdbId` or `filmowId`. An imported movie without TMDB id is resolved and enriched on the spot; `matchStatus` is `matched`, `pending` or `unmatched` (only the source's data) | `id`, `tmdbId`, `filmowId` |
 | GET    | `/persons/{id}`, `/persons/tmdb/{tmdbId}` | Person with the catalog movies they are in (database or TMDB id) | —                                                                                                  |
 
@@ -298,7 +299,7 @@ The charts (B9) are computed from the user's sessions of a year, counting only t
 
 ### Bichinho, missions and Caderninho
 
-The bichinho (B10) lives in the shelter: first the user picks one of the three starters (`pipoca-doce`, `pipoca-salgada`, `pipoca-caramelo`) for good, then the others unlock by what they watch (movies, minutes, horror or sci-fi movies, movies before 1970, a CineClube joined, a maratona finished, missions done). The catalog and its rules are in `PetCatalog`. The pinned bichinho gets the XP of each session the user logs (20 for a finished movie plus 1 per 10 minutes, up to 30); imported sessions give nothing. Level *n* needs 50 × *n* × (*n* − 1) XP, up to 50. Unlocking publishes `desbloquear_bichinho` with a `bichinho` block.
+The bichinho (B10) lives in the shelter: first the user picks one of the three starters (`pipoca-doce`, `pipoca-salgada`, `pipoca-caramelo`) for good, then the others unlock by what they watch (movies, minutes, horror or sci-fi movies, movies before 1970, a CineClube joined, a maratona finished, missions done, star systems opened in the Universo de Filmes). The catalog and its rules are in `PetCatalog`. The pinned bichinho gets the XP of each session the user logs (20 for a finished movie plus 1 per 10 minutes, up to 30); imported sessions give nothing. Level *n* needs 50 × *n* × (*n* − 1) XP, up to 50. Unlocking publishes `desbloquear_bichinho` with a `bichinho` block.
 
 Each week (from Monday) has three missions, the same for everyone, picked from `MissionCatalog`; their progress comes from the week's own sessions, and a mission gives its XP once when it is reached.
 
@@ -310,6 +311,7 @@ The Caderninho is private. Reading a day never creates it; saving creates it, an
 | POST   | `/users/me/pets/starter` | `{ slug }` one of the starters (201). 409 `starter_chosen` the second time |
 | PUT    | `/users/me/pets/{slug}/pin` | Pins an unlocked bichinho (404 otherwise) |
 | GET    | `/users/{userId}/pets` | Public: the unlocked bichinhos of a profile |
+| POST   | `/users/me/universe/visits` | `{ movieIds[] }` (1 to 50 database ids): the star systems opened in the Universo de Filmes, counted once per movie; unknown ids are skipped. Answers `{ systemsVisited, unlockedPets[] }`. 10 systems unlock `foguete`, 50 unlock `astronauta` |
 | GET    | `/users/me/missions` | `{ weekStart, weekEnd, missions[] }` with `type`, `target`, `progress`, `xp`, `completed` |
 | GET    | `/users/me/diary/{date}` | The day, or an empty one with `saved: false` |
 | PUT    | `/users/me/diary/{date}` | `{ mood?, note?, tasks[] }`; mood `great`, `good`, `okay`, `bad` or `awful` |
