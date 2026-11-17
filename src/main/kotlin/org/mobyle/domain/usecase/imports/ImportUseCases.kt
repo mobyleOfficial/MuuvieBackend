@@ -2,16 +2,17 @@ package org.mobyle.domain.usecase.imports
 
 import kotlinx.serialization.Serializable
 import org.mobyle.domain.model.ConflictException
+import org.mobyle.domain.model.ImportFile
 import org.mobyle.domain.model.ImportJob
 import org.mobyle.domain.model.ImportOptions
 import org.mobyle.domain.model.NotFoundException
 import org.mobyle.domain.model.Page
 import org.mobyle.domain.model.PageRequest
-import org.mobyle.domain.model.UnavailableException
 import org.mobyle.domain.model.ValidationException
 import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
 import org.mobyle.domain.model.vocabulary.Visibility
+import org.mobyle.domain.repository.ImportFileReader
 import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
 
@@ -36,9 +37,9 @@ class StartImport(private val repository: ImportRepository, private val queue: I
     operator fun invoke(userId: String, input: StartImportInput, autoConfirm: Boolean = false): ImportJob {
         val source = ImportSource.fromWireValue(input.source)
             ?: throw ValidationException("source", "source must be one of ${ImportSource.entries.joinToString { it.wireValue }}")
-        // F3.3 is on hold until the Letterboxd input format is decided (roadmap A1).
+        // Letterboxd has no login flow: its history comes in a file (StartFileImport).
         if (source == ImportSource.LETTERBOXD) {
-            throw UnavailableException("import_source_unavailable", "Letterboxd import is not available yet")
+            throw ValidationException("source", "Letterboxd imports need a file")
         }
         val username = input.username.trim()
         if (!USERNAME.matches(username)) throw ValidationException("username", "username is invalid")
@@ -46,6 +47,32 @@ class StartImport(private val repository: ImportRepository, private val queue: I
             ?: throw ConflictException("import_in_progress", "An import from this source is already in progress")
         queue.read(job, input.cookies, autoConfirm)
         return job
+    }
+}
+
+/**
+ * POST /imports with files (research/features/csv-import/spec.md). The files are read in the
+ * request, so a bad file is refused before any job exists, and the job starts on its preview:
+ * there is nothing slow left to read. The user picks the [source]: a Filmow CSV and a
+ * Letterboxd import CSV look the same.
+ */
+class StartFileImport(private val repository: ImportRepository, private val reader: ImportFileReader) {
+    operator fun invoke(userId: String, sourceValue: String?, files: List<ImportFile>): ImportJob {
+        val source = sourceValue?.let(ImportSource::fromWireValue)
+            ?: throw ValidationException("source", "source must be one of ${ImportSource.entries.joinToString { it.wireValue }}")
+        val bundle = reader.read(source, files)
+        val inputRef = files.first().name.substringAfterLast('/').substringAfterLast('\\').trim()
+            .take(INPUT_REF_LENGTH).ifEmpty { DEFAULT_INPUT_REF }
+        val job = repository.createJob(userId, source, inputRef)
+            ?: throw ConflictException("import_in_progress", "An import from this source is already in progress")
+        repository.transition(job.id, setOf(ImportStatus.PENDING), ImportStatus.READING)
+        repository.saveRead(job.id, bundle)
+        return repository.getJob(job.id)!!
+    }
+
+    private companion object {
+        const val INPUT_REF_LENGTH = 255
+        const val DEFAULT_INPUT_REF = "file"
     }
 }
 

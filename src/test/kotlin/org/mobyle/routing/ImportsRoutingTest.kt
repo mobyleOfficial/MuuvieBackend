@@ -1,6 +1,10 @@
 package org.mobyle.routing
 
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.request.get
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -27,6 +31,7 @@ import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
 import org.mobyle.configureStatusPages
+import org.mobyle.data.imports.FileImportReader
 import org.mobyle.domain.model.ImportJob
 import org.mobyle.domain.model.JWTClaims
 import org.mobyle.domain.model.vocabulary.ImportSource
@@ -42,6 +47,7 @@ import org.mobyle.domain.usecase.imports.GetImports
 import org.mobyle.domain.usecase.imports.GetUnmatchedItems
 import org.mobyle.domain.usecase.imports.ImportAccess
 import org.mobyle.domain.usecase.imports.ResolveUnmatchedItem
+import org.mobyle.domain.usecase.imports.StartFileImport
 import org.mobyle.domain.usecase.imports.StartImport
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -74,6 +80,7 @@ class ImportsRoutingTest {
                 single { ValidateToken(authRepository) }
                 single { ImportAccess(repository) }
                 single { StartImport(repository, queue) }
+                single { StartFileImport(repository, FileImportReader()) }
                 single { GetImport(get()) }
                 single { GetImports(repository) }
                 single { ConfirmImport(repository, get(), queue) }
@@ -135,5 +142,49 @@ class ImportsRoutingTest {
 
         assertEquals(HttpStatusCode.Conflict, response.status)
         assertEquals("import_in_progress", Json.parseToJsonElement(response.bodyAsText()).jsonObject["error"]!!.jsonPrimitive.content)
+    }
+
+    private suspend fun ApplicationTestBuilder.upload(source: String, fileName: String, content: String) =
+        client.submitFormWithBinaryData(
+            url = "/api/v1/imports",
+            formData = formData {
+                append("source", source)
+                append(
+                    "file",
+                    content.toByteArray(),
+                    Headers.build { append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"") }
+                )
+            }
+        ) { header("Authorization", "Bearer ana-token") }
+
+    @Test
+    fun `a multipart upload reads the file and answers 202 with the job`() = withApp {
+        every { repository.createJob("ana", ImportSource.FILMOW, "maria.csv") } returns job
+
+        val response = upload("filmow", "maria.csv", "Title,Directors,Year,Rating\nCasablanca,Michael Curtiz,1942,4.5\n")
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        verify { repository.saveRead(7, match { it.watched.single().title == "Casablanca" }) }
+        verify(exactly = 0) { queue.read(any(), any(), any()) }
+    }
+
+    @Test
+    fun `a file the server cannot read is a 400 with its reason, and no job`() = withApp {
+        val response = upload("letterboxd", "export (1).csv", "Date,Name,Year,Letterboxd URI\n2024-01-01,Vertigo,1958,https://boxd.it/a\n")
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals("ambiguous_file", Json.parseToJsonElement(response.bodyAsText()).jsonObject["error"]!!.jsonPrimitive.content)
+        verify(exactly = 0) { repository.createJob(any(), any(), any()) }
+    }
+
+    @Test
+    fun `Letterboxd without a file is a 400`() = withApp {
+        val response = client.post("/api/v1/imports") {
+            header("Authorization", "Bearer ana-token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"source":"letterboxd","username":"ana"}""")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
     }
 }

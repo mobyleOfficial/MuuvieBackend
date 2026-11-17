@@ -5,19 +5,22 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.datetime.Instant
 import org.mobyle.domain.model.ConflictException
+import org.mobyle.domain.model.ImportBundle
+import org.mobyle.domain.model.ImportFile
 import org.mobyle.domain.model.ImportJob
+import org.mobyle.domain.model.InvalidFileException
 import org.mobyle.domain.model.ImportOptions
 import org.mobyle.domain.model.ImportPreview
 import org.mobyle.domain.model.ImportPreviewList
 import org.mobyle.domain.model.ImportedMovie
 import org.mobyle.domain.model.MovieCandidate
 import org.mobyle.domain.model.NotFoundException
-import org.mobyle.domain.model.UnavailableException
 import org.mobyle.domain.model.UnmatchedItem
 import org.mobyle.domain.model.ValidationException
 import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
 import org.mobyle.domain.model.vocabulary.Visibility
+import org.mobyle.domain.repository.ImportFileReader
 import org.mobyle.domain.repository.ImportJobQueue
 import org.mobyle.domain.repository.ImportRepository
 import kotlin.test.Test
@@ -46,14 +49,41 @@ class ImportUseCasesTest {
     }
 
     @Test
-    fun `starting rejects Letterboxd, a bad username and a second active job`() {
+    fun `starting rejects Letterboxd without a file, a bad username and a second active job`() {
         val start = StartImport(repository, queue)
-        assertFailsWith<UnavailableException> { start("ana", StartImportInput("letterboxd", "ana")) }
+        assertFailsWith<ValidationException> { start("ana", StartImportInput("letterboxd", "ana")) }
         assertFailsWith<ValidationException> { start("ana", StartImportInput("orkut", "ana")) }
         assertFailsWith<ValidationException> { start("ana", StartImportInput("filmow", "../etc")) }
 
         every { repository.createJob(any(), any(), any()) } returns null
         assertFailsWith<ConflictException> { start("ana", StartImportInput("filmow", "ana")) }
+    }
+
+    @Test
+    fun `a file import reads the files first and starts on the preview, named after the file`() {
+        val reader = mockk<ImportFileReader>()
+        val files = listOf(ImportFile("C:\\Users\\ana\\maria-1.csv", ByteArray(0)), ImportFile("maria-2.csv", ByteArray(0)))
+        val bundle = ImportBundle(watched = listOf(ImportedMovie("title:casablanca:1942", "Casablanca", year = 1942)))
+        every { reader.read(ImportSource.FILMOW, files) } returns bundle
+        every { repository.createJob("ana", ImportSource.FILMOW, "maria-1.csv") } returns job(ImportStatus.PENDING)
+        every { repository.getJob(7) } returns job(ImportStatus.PREVIEW)
+
+        StartFileImport(repository, reader)("ana", "filmow", files)
+
+        verify { repository.transition(7, setOf(ImportStatus.PENDING), ImportStatus.READING, null) }
+        verify { repository.saveRead(7, bundle) }
+    }
+
+    @Test
+    fun `a file import with a bad file or source creates no job`() {
+        val reader = mockk<ImportFileReader>()
+        every { reader.read(any(), any()) } throws InvalidFileException("unsupported_file", "bad")
+        val start = StartFileImport(repository, reader)
+
+        assertFailsWith<InvalidFileException> { start("ana", "letterboxd", listOf(ImportFile("x.csv", ByteArray(0)))) }
+        assertFailsWith<ValidationException> { start("ana", "orkut", listOf(ImportFile("x.csv", ByteArray(0)))) }
+        assertFailsWith<ValidationException> { start("ana", null, listOf(ImportFile("x.csv", ByteArray(0)))) }
+        verify(exactly = 0) { repository.createJob(any(), any(), any()) }
     }
 
     @Test
