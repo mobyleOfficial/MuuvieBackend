@@ -28,3 +28,9 @@ class UnavailableException(code: String, message: String) : DomainException(code
 
 /** The user did an action too many times in a short window (B6 rate limits). */
 class TooManyRequestsException(code: String, message: String) : DomainException(code, message)
+
+/** An uploaded file the server cannot read: wrong format, ambiguous or empty (file imports). */
+class InvalidFileException(code: String, message: String) : DomainException(code, message)
+
+/** The request carries more data than the endpoint accepts. */
+class PayloadTooLargeException(code: String, message: String) : DomainException(code, message)

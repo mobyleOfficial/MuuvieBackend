@@ -13,7 +13,6 @@ import org.mobyle.domain.model.ImportedList
 import org.mobyle.domain.model.ImportedMovie
 import org.mobyle.domain.model.Movie
 import org.mobyle.domain.model.vocabulary.ImportSource
-import org.mobyle.domain.policy.MovieMatchPolicy
 import org.mobyle.domain.repository.ImportSourceReader
 
 /**
@@ -58,7 +57,7 @@ class FilmowImportReader(
             val year = releaseDate?.take(4)?.toIntOrNull()
             return ImportedMovie(
                 // Without a Filmow id (rare), the title and year identify the movie on reimports.
-                externalId = filmowId ?: "title:${MovieMatchPolicy.normalize(title)}:${year ?: ""}",
+                externalId = filmowId ?: ImportedMovie.titleKey(title, year),
                 title = title,
                 originalTitle = originalTitle,
                 localTitle = localTitle,

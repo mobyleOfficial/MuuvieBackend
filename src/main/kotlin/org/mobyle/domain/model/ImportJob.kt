@@ -8,6 +8,7 @@ import org.mobyle.domain.model.vocabulary.ImportSource
 import org.mobyle.domain.model.vocabulary.ImportStatus
 import org.mobyle.domain.model.vocabulary.MovieMatchMethod
 import org.mobyle.domain.model.vocabulary.Visibility
+import org.mobyle.domain.policy.MovieMatchPolicy
 
 /** A movie as the source knows it. [externalId] is the id on the source (e.g. the Filmow id). */
 @Serializable
@@ -27,12 +28,32 @@ data class ImportedMovie(
     val imdbUrl: String? = null,
     // 0.5-5 stars, as both sources rate.
     val stars: Double? = null,
+    // The latest watch; the date of the movie on "Já assisti".
     val watchedOn: LocalDate? = null,
+    // Every session the source has, one entry per session (a Letterboxd diary logs rewatches,
+    // sometimes twice on one day); each becomes a watch log.
+    val watchDates: List<LocalDate> = emptyList(),
+    // The user's review on the source. With a rating it is the rating's review (one per movie);
+    // without one it is the comment of the session of [reviewOn], or of the latest session.
+    val review: String? = null,
+    val reviewOn: LocalDate? = null,
     // Set by the matcher before writing, when TMDB matched with confidence.
     val tmdbId: Int? = null,
     // MovieMatchMethod wire value of that match.
     val matchMethod: String? = null
-)
+) {
+    /** The dates that become watch logs, oldest first; a date twice is two sessions that day. */
+    val sessionDates: List<LocalDate> get() = watchDates.ifEmpty { listOfNotNull(watchedOn) }.sorted()
+
+    companion object {
+        /** Prefix of [externalId]s made from the title and year, which are not ids on the source. */
+        const val TITLE_KEY_PREFIX = "title:"
+
+        /** The id of a movie the source gives no id for; the same movie gets the same key on reimports. */
+        fun titleKey(title: String, year: Int?): String =
+            "$TITLE_KEY_PREFIX${MovieMatchPolicy.normalize(title)}:${year ?: ""}"
+    }
+}
 
 @Serializable
 data class ImportedList(
@@ -40,7 +61,9 @@ data class ImportedList(
     val title: String,
     val description: String? = null,
     val coverUrl: String? = null,
-    val movies: List<ImportedMovie> = emptyList()
+    val movies: List<ImportedMovie> = emptyList(),
+    // A list the user opts into (a Letterboxd tag): left out unless chosen on the preview.
+    val optional: Boolean = false
 )
 
 /**
@@ -62,13 +85,14 @@ data class ImportBundle(
         watched = watched.size,
         watchlist = watchlist.size,
         favorites = favorites.size,
-        logs = watched.count { it.watchedOn != null },
-        lists = lists.map { ImportPreviewList(it.externalId, it.title, it.movies.size, it.coverUrl) }
+        logs = watched.sumOf { it.sessionDates.size },
+        reviews = watched.count { it.review != null },
+        lists = lists.map { ImportPreviewList(it.externalId, it.title, it.movies.size, it.coverUrl, it.optional) }
     )
 
-    /** Keeps only the chosen lists (by external id); null keeps all. */
+    /** Keeps only the chosen lists (by external id); null keeps every list that is not optional. */
     fun withLists(externalIds: Set<String>?): ImportBundle =
-        if (externalIds == null) this else copy(lists = lists.filter { it.externalId in externalIds })
+        copy(lists = lists.filter { if (externalIds == null) !it.optional else it.externalId in externalIds })
 }
 
 /** F3.5: what the import is about to write. */
@@ -78,11 +102,20 @@ data class ImportPreview(
     val watchlist: Int,
     val favorites: Int,
     val logs: Int,
-    val lists: List<ImportPreviewList>
+    val lists: List<ImportPreviewList>,
+    // Reviews that become the review of the movie's rating.
+    val reviews: Int = 0
 )
 
 @Serializable
-data class ImportPreviewList(val externalId: String, val title: String, val movieCount: Int, val coverUrl: String? = null)
+data class ImportPreviewList(
+    val externalId: String,
+    val title: String,
+    val movieCount: Int,
+    val coverUrl: String? = null,
+    // Unchecked at first on the preview (a Letterboxd tag).
+    val optional: Boolean = false
+)
 
 /** What the user chose on the preview. */
 @Serializable
@@ -103,7 +136,8 @@ data class ImportCounts(
     val logs: Int = 0,
     val unmatched: Int = 0,
     // Movies already owned by the user in the Muuvie, left as they were.
-    val keptFromMuuvie: Int = 0
+    val keptFromMuuvie: Int = 0,
+    val reviews: Int = 0
 )
 
 @Serializable
