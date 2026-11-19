@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import cloudscraper
 from bs4 import BeautifulSoup
 
@@ -837,12 +838,17 @@ def main():
 
     username = sys.argv[1]
     cookies = sys.argv[2] if len(sys.argv) > 2 else ""
+    log(f"[START] @{username} python={sys.executable} ({sys.version.split()[0]}) cwd={os.getcwd()} "
+        f"cookies={'yes' if cookies else 'no'}")
 
     try:
         result = scrape_profile(username, cookies)
         print(json.dumps(result, ensure_ascii=False))
+        log("[END] Result written to stdout")
     except Exception as e:
         log(f"[FATAL] {type(e).__name__}: {e}")
+        for line in traceback.format_exc().rstrip().splitlines():
+            log(f"[FATAL]   {line}")
         print(json.dumps({"error": str(e), "username": username}))
         sys.exit(1)
 
