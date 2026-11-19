@@ -102,7 +102,7 @@ class FeedRoutingTest {
             modules(module {
                 single { ValidateToken(authRepository) }
                 single { ShelfAccess(mockk<ShelfRepository>(relaxed = true)) }
-                single { ProfileAccess(profiles, get()) }
+                single { ProfileAccess(profiles, get(), io.mockk.mockk(relaxed = true)) }
                 single { ActivityAccess(repository, follows) }
                 single { GetFeed(repository) }
                 single { GetProfileActivities(repository, get()) }

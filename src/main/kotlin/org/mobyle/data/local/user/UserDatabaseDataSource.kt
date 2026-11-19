@@ -1,5 +1,6 @@
 package org.mobyle.data.local.user
 
+import org.mobyle.data.local.moderation.notBlockedWith
 import kotlinx.datetime.Clock
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -227,7 +228,10 @@ class UserDatabaseDataSourceImpl : UserDatabaseDataSource {
                 .toSet()
 
             UsersTable.selectAll()
-                .where { (UsersTable.username like "%${query.lowercase()}%") and not(UsersTable.externalId eq currentUserExternalId) }
+                .where {
+                    (UsersTable.username like "%${query.lowercase()}%") and not(UsersTable.externalId eq currentUserExternalId) and
+                        notBlockedWith(currentUserDbId, UsersTable.id)
+                }
                 .limit(20)
                 .map { row ->
                     val userDbId = row[UsersTable.id].value

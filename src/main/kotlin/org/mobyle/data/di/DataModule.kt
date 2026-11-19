@@ -135,6 +135,19 @@ import org.mobyle.domain.repository.NotificationRepository
 import org.mobyle.domain.repository.RateLimiter
 import org.mobyle.domain.repository.SocialNotifier
 import java.io.File
+import org.mobyle.data.local.moderation.ModerationDataSource
+import org.mobyle.data.local.moderation.ModerationDataSourceImpl
+import org.mobyle.data.local.user.AccountDataSource
+import org.mobyle.data.local.user.AccountDataSourceImpl
+import org.mobyle.data.remote.auth.social.AppleKeyConfig
+import org.mobyle.data.remote.auth.social.AppleTokenRevokerImpl
+import org.mobyle.data.repository.AccountRepositoryImpl
+import org.mobyle.data.repository.ModerationRepositoryImpl
+import org.mobyle.data.service.WebhookReportNotifier
+import org.mobyle.domain.repository.AccountRepository
+import org.mobyle.domain.repository.AppleTokenRevoker
+import org.mobyle.domain.repository.ModerationRepository
+import org.mobyle.domain.repository.ReportNotifier
 import org.koin.dsl.module
 
 val dataModule = module {
@@ -282,6 +295,33 @@ val dataModule = module {
     single<NotificationDataSource> { NotificationDataSourceImpl() }
     single<NotificationRepository> { NotificationRepositoryImpl(notificationDataSource = get()) }
     single<RateLimiter> { InMemoryRateLimiter() }
+
+    // Account deletion, blocks and reports (store requirements).
+    single<AccountDataSource> { AccountDataSourceImpl() }
+    single<AccountRepository> { AccountRepositoryImpl(accountDataSource = get(), userLocalDataSource = get()) }
+    single<ModerationDataSource> { ModerationDataSourceImpl() }
+    single<ModerationRepository> { ModerationRepositoryImpl(moderationDataSource = get()) }
+
+    // Reports go to REPORTS_WEBHOOK_URL (Slack or Discord) when set; they are always stored and logged.
+    single<ReportNotifier> {
+        val url = System.getenv("REPORTS_WEBHOOK_URL")?.takeIf { it.isNotBlank() }
+        if (url == null) ReportNotifier { _, _ -> } else WebhookReportNotifier(HttpClient(CIO) {
+            install(HttpTimeout) { requestTimeoutMillis = 10_000 }
+        }, url)
+    }
+
+    // Revoking Sign in with Apple tokens on account deletion needs the team's key: APPLE_TEAM_ID,
+    // APPLE_KEY_ID and APPLE_PRIVATE_KEY (the .p8 contents). The code is exchanged with APPLE_CLIENT_IDS.
+    single<AppleTokenRevoker> {
+        val teamId = System.getenv("APPLE_TEAM_ID")?.takeIf { it.isNotBlank() }
+        val keyId = System.getenv("APPLE_KEY_ID")?.takeIf { it.isNotBlank() }
+        val privateKey = System.getenv("APPLE_PRIVATE_KEY")?.takeIf { it.isNotBlank() }
+        val clientIds = System.getenv("APPLE_CLIENT_IDS").orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val config = if (teamId != null && keyId != null && privateKey != null) {
+            AppleKeyConfig(teamId, keyId, privateKey, clientIds)
+        } else null
+        AppleTokenRevokerImpl(HttpClient(CIO) { install(HttpTimeout) { requestTimeoutMillis = 10_000 } }, config)
+    }
 
     // Push is off until FCM_SERVICE_ACCOUNT (the service account JSON) or FCM_SERVICE_ACCOUNT_FILE is set.
     single<PushSender> {

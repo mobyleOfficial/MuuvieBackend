@@ -7,10 +7,15 @@ interface UserLocalDataSource {
     suspend fun saveUser(user: User): Result<User>
     suspend fun getUserById(userId: String): Result<User?>
     suspend fun getUserByEmail(email: String): Result<User?>
+    fun removeUser(userId: String)
 }
 
 class UserLocalDataSourceImpl : UserLocalDataSource {
     private val users = ConcurrentHashMap<String, User>()
+
+    override fun removeUser(userId: String) {
+        users.remove(userId)
+    }
 
     override suspend fun saveUser(user: User): Result<User> {
         return try {

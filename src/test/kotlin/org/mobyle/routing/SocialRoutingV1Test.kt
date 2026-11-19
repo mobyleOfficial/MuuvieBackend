@@ -92,9 +92,9 @@ class SocialRoutingV1Test {
                 single { ValidateToken(authRepository) }
                 single { SearchUsers(profileRepository) }
                 single { ShelfAccess(mockk<ShelfRepository>(relaxed = true)) }
-                single { ProfileAccess(userProfiles, get()) }
+                single { ProfileAccess(userProfiles, get(), io.mockk.mockk(relaxed = true)) }
                 single { MutualChangeNotice(conversations, notifier) }
-                single { FollowAccount(follows, notifier, rateLimiter, get()) }
+                single { FollowAccount(follows, notifier, rateLimiter, get(), io.mockk.mockk(relaxed = true)) }
                 single { UnfollowAccount(follows, get()) }
                 single { GetFollowStatus(follows) }
                 single { GetFollowList(follows) }

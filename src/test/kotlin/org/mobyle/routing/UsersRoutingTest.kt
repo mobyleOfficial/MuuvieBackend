@@ -107,7 +107,7 @@ class UsersRoutingTest {
                 single { ValidateToken(authRepository) }
                 single { ShelfAccess(shelfRepository) }
                 single { LocadoraAccess(locadoraRepository, get()) }
-                single { ProfileAccess(repository, get()) }
+                single { ProfileAccess(repository, get(), io.mockk.mockk(relaxed = true)) }
                 single { GetMyProfile(repository, get()) }
                 single { GetProfile(get()) }
                 single { GetProfileStats(get()) }

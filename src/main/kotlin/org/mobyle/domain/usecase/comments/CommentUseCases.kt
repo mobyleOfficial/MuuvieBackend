@@ -1,5 +1,6 @@
 package org.mobyle.domain.usecase.comments
 
+import org.mobyle.domain.repository.ModerationRepository
 import org.mobyle.domain.model.CommentTarget
 import org.mobyle.domain.model.ForbiddenException
 import org.mobyle.domain.model.NotFoundException
@@ -26,12 +27,20 @@ class CommentAccess(private val repository: CommentThreadRepository, private val
 }
 
 /** Comments of a watch log or a rating, oldest first (F2.8). */
-class GetThreadComments(private val repository: CommentThreadRepository, private val access: CommentAccess) {
+class GetThreadComments(
+    private val repository: CommentThreadRepository,
+    private val access: CommentAccess,
+    private val moderation: ModerationRepository
+) {
     operator fun invoke(viewerId: String?, targetType: String, targetId: Long, page: PageRequest): Page<ThreadComment> {
         val target = access.target(targetType)
         access.visibleTargetOwner(viewerId, target, targetId)
         val comments = repository.getComments(target, targetId, page)
-        return comments.copy(results = comments.results.map { it.copy(self = it.author.id == viewerId) })
+        // Comments of someone blocked either way are left out of the page.
+        val blocked = viewerId?.let { moderation.blockedIds(it) }.orEmpty()
+        return comments.copy(
+            results = comments.results.filter { it.author.id !in blocked }.map { it.copy(self = it.author.id == viewerId) }
+        )
     }
 }
 
