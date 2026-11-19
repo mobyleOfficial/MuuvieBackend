@@ -8,5 +8,7 @@ data class LoginAuthTokenResponse(
     val tokenType: String = "Bearer",
     val expiresIn: Long,
     val refreshToken: String? = null,
-    val profile: UserProfile
+    val profile: UserProfile,
+    // True until the account picks its nickname (PUT /auth/nickname); a new account starts with a generated one.
+    val needsNickname: Boolean = false
 )

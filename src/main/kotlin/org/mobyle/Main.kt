@@ -27,6 +27,7 @@ import org.mobyle.domain.model.NotFoundException
 import org.mobyle.domain.model.PayloadTooLargeException
 import org.mobyle.domain.model.TooManyRequestsException
 import org.mobyle.domain.model.UnavailableException
+import org.mobyle.domain.model.UnauthorizedException
 import org.mobyle.domain.model.ValidationException
 import org.mobyle.data.local.database.GenresTable
 import org.mobyle.data.local.auth.TokenBlocklistDataSource
@@ -127,6 +128,7 @@ fun Application.configureStatusPages() {
                 is TooManyRequestsException -> HttpStatusCode.TooManyRequests
                 is InvalidFileException -> HttpStatusCode.BadRequest
                 is PayloadTooLargeException -> HttpStatusCode.PayloadTooLarge
+                is UnauthorizedException -> HttpStatusCode.Unauthorized
             }
             val details = (cause as? ValidationException)?.let { mapOf("field" to it.field) }
             call.respond(status, ApiError(cause.code, cause.message.orEmpty(), details))

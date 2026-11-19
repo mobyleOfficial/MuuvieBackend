@@ -104,11 +104,10 @@ import org.mobyle.domain.usecase.imports.ImportAccess
 import org.mobyle.domain.usecase.imports.ResolveUnmatchedItem
 import org.mobyle.domain.usecase.imports.StartFileImport
 import org.mobyle.domain.usecase.imports.StartImport
-import org.mobyle.domain.usecase.auth.LoginUser
 import org.mobyle.domain.usecase.auth.LogoutUser
-import org.mobyle.domain.usecase.auth.ProcessOAuthCallback
+import org.mobyle.domain.usecase.auth.ChooseNickname
 import org.mobyle.domain.usecase.auth.RefreshToken
-import org.mobyle.domain.usecase.auth.SignUpUser
+import org.mobyle.domain.usecase.auth.SignInWithProvider
 import org.mobyle.domain.usecase.auth.CheckNicknameAvailability
 import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.domain.usecase.movies.*
@@ -372,11 +371,10 @@ val appModule = module {
     factory { ResolveUnmatchedItem(repository = get(), access = get()) }
 
     // Auth use cases
-    factory { ProcessOAuthCallback(authRepository = get<AuthRepository>()) }
+    factory { SignInWithProvider(authRepository = get<AuthRepository>()) }
+    factory { ChooseNickname(authRepository = get<AuthRepository>()) }
     factory { ValidateToken(authRepository = get<AuthRepository>()) }
     factory { RefreshToken(authRepository = get<AuthRepository>()) }
-    factory { LoginUser(authRepository = get<AuthRepository>()) }
-    factory { SignUpUser(authRepository = get<AuthRepository>()) }
     factory { LogoutUser(authRepository = get<AuthRepository>()) }
     factory { CheckNicknameAvailability(authRepository = get<AuthRepository>()) }
 }

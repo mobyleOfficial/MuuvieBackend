@@ -7,7 +7,8 @@ COPY gradlew .
 COPY gradle gradle
 COPY build.gradle.kts .
 COPY settings.gradle.kts .
-RUN chmod +x gradlew
+# Strip CRLF (Windows checkouts) so the wrapper runs on Linux
+RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 
 # Download dependencies (cached unless build files change)
 RUN ./gradlew dependencies --no-daemon || true

@@ -39,7 +39,8 @@ Backend API for the Moovie app, powered by [TMDB](https://www.themoviedb.org/). 
 | `JWT_ISSUER`        | No       | `moovie-backend`         | Issuer of the access tokens |
 | `REFRESH_TOKEN_EXPIRY_DAYS` | No | `30`                   | Lifetime of a refresh token |
 | `SCRAPE_INTERVAL_HOURS` | No   | `3`                      | How often the news are scraped |
-| `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_PROVIDER_URL`, `OAUTH_REDIRECT_URI` | No | — | OAuth login; off without them |
+| `GOOGLE_CLIENT_IDS` | For Google sign-in | — | Comma-separated OAuth client ids whose ID tokens are accepted (iOS, Android and web clients). Google sign-in answers 503 without them |
+| `APPLE_CLIENT_IDS`  | For Apple sign-in | — | Comma-separated bundle ids of the app flavors (and the Services ID, for sign-in outside iOS). Apple sign-in answers 503 without them |
 | `METRICS_TOKEN`     | No       | —                        | Turns on `GET /metrics` (Prometheus) behind `Authorization: Bearer <token>`; without it the route is a 404 |
 
 ## Getting Started
@@ -125,6 +126,18 @@ With a token, `/movies/trending`, `/movies/search`, `/movies/discover` and the `
 | GET    | `/movies/{id}/similar`        | Public. Only the similar movies of a movie by its database id, without the rest of the detail: `{ movieId, results, affinities }`. `results` is sorted most similar first; `affinities` has one `{ movieId, score, sharedGenres, sharedKeywords, genres }` per result, in the same order (`genres` are all of the similar movie's own, for filtering), with `score` from 0 to 1 blending TMDB's order with the saved genres and keywords both movies share (rank only, around 0.5, for movies not yet enriched; those are put ahead of the enrichment loop, up to 10 per call). Same source and 7-day cache as `similarMovies` of the detail (up to 10); a movie TMDB lists no similars for is not asked again for 7 days either. A title not in Latin script (TMDB falls back to the original when there is no Portuguese one) is swapped for the English one and saved, up to 3 per call. With a token each movie carries `me`. Empty for an imported movie without TMDB id; 404 for an unknown id | —     |
 | GET    | `/movies`                     | Movie details by `id` (database), `tmdbId` or `filmowId`. An imported movie without TMDB id is resolved and enriched on the spot; `matchStatus` is `matched`, `pending` or `unmatched` (only the source's data) | `id`, `tmdbId`, `filmowId` |
 | GET    | `/persons/{id}`, `/persons/tmdb/{tmdbId}` | Person with the catalog movies they are in (database or TMDB id) | —                                                                                                  |
+
+### Auth
+
+There is no password login: an account signs in with Apple or Google. The app runs the native SDK and sends its ID token; the server checks its signature against the provider's JWKS, the issuer, the audience (`GOOGLE_CLIENT_IDS` / `APPLE_CLIENT_IDS`), the expiry and, for Apple, the nonce.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST   | `/auth/social` | Public. `{ provider: "apple" | "google", idToken, nonce? }` (`nonce` is the raw one; the SDK got its SHA-256 hex). The account linked to that provider account, else the one with the same **verified** e-mail (linked from then on), else a new one (201) with a generated nickname. Answers `{ accessToken, refreshToken, expiresIn, profile, needsNickname }`. 400 unknown provider or blank token, 401 `invalid_token`, 503 `provider_not_configured` |
+| PUT    | `/auth/nickname` | `{ nickname }`: 1–30 characters, no quotes, backslashes or control characters (400), unique (409 `nickname_already_exists`). Confirms it, so `needsNickname` turns false; an account without `@handle` gets the nickname as handle when it fits and is free |
+| GET    | `/auth/check-nickname` | Public. `?nickname=` → `{ nickname, available }` |
+| POST   | `/auth/refresh` | `{ refreshToken }` → a new pair (rotation; reusing a rotated token revokes every session of the user) |
+| POST   | `/auth/logout` | Revokes the access token and, with `{ refreshToken }`, that refresh token |
 
 ### Profile
 
@@ -393,7 +406,7 @@ src/main/kotlin/org/mobyle/
 │   ├── di/                         # Data layer DI
 │   ├── local/
 │   │   ├── database/              # Exposed tables & DB config
-│   │   ├── oauth/                 # OAuth state storage
+│   │   ├── auth/                  # Refresh tokens, token blocklist, Apple/Google identities
 │   │   └── user/                  # Local user storage
 │   ├── remote/                     # TMDB API client & mappers
 │   └── repository/                 # Repository implementations

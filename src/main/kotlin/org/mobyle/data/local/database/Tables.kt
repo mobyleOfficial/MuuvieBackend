@@ -24,6 +24,8 @@ object UsersTable : LongIdTable("users") {
     val bannerUrl = varchar("banner_url", 500).nullable()
     val accentColor = varchar("accent_color", 7).nullable()
     val links = array<String>("links").default(emptyList())
+    // False while an account created by social sign-in still has its generated nickname.
+    val nicknameConfirmed = bool("nickname_confirmed").default(true)
     // Curated profiles come first in the discovery hub.
     val featured = bool("featured").default(false)
 }
@@ -630,4 +632,17 @@ object DiaryTasksTable : LongIdTable("diary_tasks") {
     val done = bool("done").default(false)
     val position = integer("position").default(0)
     val movieId = optReference("movie_id", MoviesTable, onDelete = ReferenceOption.SET_NULL)
+}
+
+/** The Apple and Google accounts an account signs in with: one row per provider account. */
+object UserIdentitiesTable : LongIdTable("user_identities") {
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE).index()
+    val provider = varchar("provider", 20) // apple, google
+    val subject = varchar("subject", 255)
+    val email = varchar("email", 255).nullable()
+    val createdAt = timestamp("created_at")
+
+    init {
+        uniqueIndex("uq_user_identities_provider_subject", provider, subject)
+    }
 }

@@ -21,9 +21,3 @@ data class JWTClaims(
     val iat: Long, // issued at (Unix timestamp)
     val exp: Long  // expiration (Unix timestamp)
 )
-
-data class OAuthCallbackRequest(
-    val code: String,
-    val state: String,
-    val codeVerifier: String? = null
-)

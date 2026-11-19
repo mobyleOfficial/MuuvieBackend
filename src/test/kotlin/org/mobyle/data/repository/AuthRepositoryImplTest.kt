@@ -1,34 +1,41 @@
 package org.mobyle.data.repository
 
-import at.favre.lib.crypto.bcrypt.BCrypt
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.mobyle.data.local.database.TokenBlocklistTable
-import kotlin.test.BeforeTest
 import org.mobyle.data.local.auth.RefreshTokenDataSource
 import org.mobyle.data.local.auth.TokenBlocklistDataSource
-import org.mobyle.data.local.oauth.OAuthStateDataSource
+import org.mobyle.data.local.auth.UserIdentityDataSource
+import org.mobyle.data.local.database.TokenBlocklistTable
 import org.mobyle.data.local.user.UserDatabaseDataSource
 import org.mobyle.data.local.user.UserLocalDataSource
 import org.mobyle.data.remote.auth.JWTUtil
+import org.mobyle.data.remote.auth.social.SocialTokenVerifier
+import org.mobyle.domain.model.ConflictException
+import org.mobyle.domain.model.SocialIdentity
+import org.mobyle.domain.model.SocialProvider
 import org.mobyle.domain.model.User
+import org.mobyle.domain.model.ValidationException
 import org.mobyle.domain.repository.UserRepository
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AuthRepositoryImplTest {
 
-    private val oauthStateDataSource = mockk<OAuthStateDataSource>()
+    private val socialTokenVerifier = mockk<SocialTokenVerifier>()
+    private val userIdentityDataSource = mockk<UserIdentityDataSource>(relaxed = true)
     private val userRepository = mockk<UserRepository>()
-    private val userDatabaseDataSource = mockk<UserDatabaseDataSource>()
+    private val userDatabaseDataSource = mockk<UserDatabaseDataSource>(relaxed = true)
     private val tokenBlocklistDataSource = TokenBlocklistDataSource()
     private val userLocalDataSource = mockk<UserLocalDataSource>(relaxed = true)
     private val refreshTokenDataSource = mockk<RefreshTokenDataSource>(relaxed = true)
@@ -38,14 +45,29 @@ class AuthRepositoryImplTest {
     )
 
     private val repository = AuthRepositoryImpl(
-        oauthDataSource = null,
-        oauthStateDataSource = oauthStateDataSource,
+        socialTokenVerifier = socialTokenVerifier,
+        userIdentityDataSource = userIdentityDataSource,
         userRepository = userRepository,
         jwtUtil = jwtUtil,
         userDatabaseDataSource = userDatabaseDataSource,
         tokenBlocklistDataSource = tokenBlocklistDataSource,
         userLocalDataSource = userLocalDataSource,
         refreshTokenDataSource = refreshTokenDataSource
+    )
+
+    private val existingUser = User(
+        id = "user-123",
+        email = "ana@example.com",
+        username = "ana",
+        createdAt = "2026-07-22T10:00:00Z"
+    )
+
+    private fun identity(email: String? = "ana@example.com", verified: Boolean = true) = SocialIdentity(
+        provider = SocialProvider.GOOGLE,
+        subject = "google-sub-1",
+        email = email,
+        emailVerified = verified,
+        picture = "https://example.com/ana.png"
     )
 
     @BeforeTest
@@ -56,108 +78,103 @@ class AuthRepositoryImplTest {
             SchemaUtils.drop(TokenBlocklistTable)
             SchemaUtils.create(TokenBlocklistTable)
         }
-    }
-
-    // Login no longer creates accounts; sign-up does.
-    @Test
-    fun `loginUser fails when email not found`() = runTest {
-        every { userDatabaseDataSource.findByEmail("new@example.com") } returns null
-
-        val result = repository.loginUser("new@example.com", "securePassword123")
-
-        assertTrue(result.isFailure)
-        assertEquals("invalid_credentials", result.exceptionOrNull()?.message)
+        every { refreshTokenDataSource.create(any()) } returns "refresh-token"
     }
 
     @Test
-    fun `loginUser returns success for existing user with correct password`() = runTest {
-        val passwordHash = BCrypt.withDefaults().hashToString(12, "correctPassword1".toCharArray())
-        val existingUser = User(
-            id = "user-123",
-            email = "existing@example.com",
-            username = "existing",
-            avatar = null,
-            createdAt = "2026-07-22T10:00:00Z",
-            passwordHash = passwordHash
-        )
+    fun `a linked provider account signs in to its account`() = runTest {
+        val identity = identity()
+        coEvery { socialTokenVerifier.verify(SocialProvider.GOOGLE, "id-token", null) } returns identity
+        every { userIdentityDataSource.findUserExternalId(identity) } returns "user-123"
+        every { userDatabaseDataSource.findByExternalId("user-123") } returns existingUser
 
-        every { userDatabaseDataSource.findByEmail("existing@example.com") } returns existingUser
+        val token = repository.signInWithProvider(SocialProvider.GOOGLE, "id-token", null)
 
-        val result = repository.loginUser("existing@example.com", "correctPassword1")
-
-        assertTrue(result.isSuccess)
-        val authToken = result.getOrThrow()
-        assertFalse(authToken.isNewUser)
-        assertEquals("existing", authToken.user.username)
-        // Password hash must not be in the returned user
-        assertEquals(null, authToken.user.passwordHash)
+        assertEquals("user-123", token.user.id)
+        assertFalse(token.isNewUser)
+        assertEquals("refresh-token", token.refreshToken)
+        assertEquals("user-123", jwtUtil.validateToken(token.accessToken).getOrThrow().userId)
+        verify(exactly = 0) { userDatabaseDataSource.save(any()) }
+        verify(exactly = 0) { userIdentityDataSource.link(any(), any()) }
     }
 
     @Test
-    fun `loginUser returns failure for wrong password`() = runTest {
-        val passwordHash = BCrypt.withDefaults().hashToString(12, "correctPassword1".toCharArray())
-        val existingUser = User(
-            id = "user-123",
-            email = "existing@example.com",
-            username = "existing",
-            avatar = null,
-            createdAt = "2026-07-22T10:00:00Z",
-            passwordHash = passwordHash
-        )
+    fun `a verified e-mail of an existing account links the provider account to it`() = runTest {
+        val identity = identity()
+        coEvery { socialTokenVerifier.verify(any(), any(), any()) } returns identity
+        every { userIdentityDataSource.findUserExternalId(identity) } returns null
+        every { userDatabaseDataSource.findByEmail("ana@example.com") } returns existingUser
 
-        every { userDatabaseDataSource.findByEmail("existing@example.com") } returns existingUser
+        val token = repository.signInWithProvider(SocialProvider.GOOGLE, "id-token", null)
 
-        val result = repository.loginUser("existing@example.com", "wrongPassword1")
-
-        assertTrue(result.isFailure)
-        assertEquals("invalid_credentials", result.exceptionOrNull()?.message)
+        assertEquals("user-123", token.user.id)
+        assertFalse(token.isNewUser)
+        verify { userIdentityDataSource.link("user-123", identity) }
+        verify(exactly = 0) { userDatabaseDataSource.save(any()) }
     }
 
     @Test
-    fun `loginUser rejects password shorter than 8 chars`() = runTest {
-        val result = repository.loginUser("test@example.com", "short")
+    fun `an unverified e-mail never links to an existing account`() = runTest {
+        val identity = identity(verified = false)
+        coEvery { socialTokenVerifier.verify(any(), any(), any()) } returns identity
+        every { userIdentityDataSource.findUserExternalId(identity) } returns null
+        every { userDatabaseDataSource.findByUsername(any()) } returns emptyList()
 
-        assertTrue(result.isFailure)
-        assertEquals("invalid_password_length", result.exceptionOrNull()?.message)
+        val token = repository.signInWithProvider(SocialProvider.GOOGLE, "id-token", null)
+
+        assertTrue(token.isNewUser)
+        verify(exactly = 0) { userDatabaseDataSource.findByEmail(any()) }
     }
 
     @Test
-    fun `loginUser rejects password longer than 72 chars`() = runTest {
-        val longPassword = "a".repeat(73)
-        val result = repository.loginUser("test@example.com", longPassword)
+    fun `a new provider account creates an account with a generated nickname to confirm`() = runTest {
+        val identity = identity(email = null, verified = false)
+        coEvery { socialTokenVerifier.verify(any(), any(), any()) } returns identity
+        every { userIdentityDataSource.findUserExternalId(identity) } returns null
+        every { userDatabaseDataSource.findByUsername(any()) } returns emptyList()
+        val saved = slot<User>()
+        every { userDatabaseDataSource.save(capture(saved)) } answers { saved.captured }
 
-        assertTrue(result.isFailure)
-        assertEquals("invalid_password_length", result.exceptionOrNull()?.message)
+        val token = repository.signInWithProvider(SocialProvider.APPLE, "id-token", "nonce")
+
+        assertTrue(token.isNewUser)
+        assertFalse(token.user.nicknameConfirmed)
+        assertFalse(saved.captured.nicknameConfirmed)
+        assertEquals("", saved.captured.email)
+        assertEquals("https://example.com/ana.png", saved.captured.avatar)
+        assertTrue(saved.captured.username.matches(Regex("[a-z0-9]+_[a-z0-9]+_\\d+")))
+        verify { userIdentityDataSource.link(saved.captured.id, identity) }
     }
 
     @Test
-    fun `loginUser normalizes email to lowercase`() = runTest {
-        val passwordHash = BCrypt.withDefaults().hashToString(4, "securePassword123".toCharArray())
-        every { userDatabaseDataSource.findByEmail("test@example.com") } returns User(
-            id = "user-1",
-            email = "test@example.com",
-            username = "test",
-            avatar = null,
-            createdAt = "2026-07-22T10:00:00Z",
-            passwordHash = passwordHash
-        )
+    fun `chooseNickname trims and confirms the nickname`() = runTest {
+        every { userDatabaseDataSource.findByExternalId("user-123") } returns existingUser
+        every { userDatabaseDataSource.isUsernameTaken("Ana Clara", "user-123") } returns false
 
-        val result = repository.loginUser("TEST@EXAMPLE.COM", "securePassword123")
+        assertEquals("Ana Clara", repository.chooseNickname("user-123", "  Ana Clara "))
+        verify { userDatabaseDataSource.confirmNickname("user-123", "Ana Clara") }
+    }
 
-        assertTrue(result.isSuccess)
-        assertEquals("test@example.com", result.getOrThrow().user.email)
+    @Test
+    fun `chooseNickname rejects a nickname in use`() = runTest {
+        every { userDatabaseDataSource.findByExternalId("user-123") } returns existingUser
+        every { userDatabaseDataSource.isUsernameTaken("joao", "user-123") } returns true
+
+        val error = assertFailsWith<ConflictException> { repository.chooseNickname("user-123", "joao") }
+        assertEquals("nickname_already_exists", error.code)
+    }
+
+    @Test
+    fun `chooseNickname rejects blank, long and JSON-breaking nicknames`() = runTest {
+        listOf("  ", "a".repeat(31), "ana\"", "ana\\", "an\na").forEach { nickname ->
+            assertFailsWith<ValidationException> { repository.chooseNickname("user-123", nickname) }
+        }
+        verify(exactly = 0) { userDatabaseDataSource.confirmNickname(any(), any()) }
     }
 
     @Test
     fun `logoutUser revokes valid token`() = runTest {
-        val user = User(
-            id = "user-123",
-            email = "test@example.com",
-            username = "testuser",
-            avatar = null,
-            createdAt = "2026-07-22T10:00:00Z"
-        )
-        val token = jwtUtil.generateToken(user)
+        val token = jwtUtil.generateToken(existingUser)
 
         val result = repository.logoutUser(token)
 
@@ -174,37 +191,15 @@ class AuthRepositoryImplTest {
 
     @Test
     fun `validateToken rejects revoked token`() = runTest {
-        val user = User(
-            id = "user-123",
-            email = "test@example.com",
-            username = "testuser",
-            avatar = null,
-            createdAt = "2026-07-22T10:00:00Z"
-        )
-        val token = jwtUtil.generateToken(user)
+        val token = jwtUtil.generateToken(existingUser)
 
-        // First validate should succeed
-        val validResult = repository.validateToken(token)
-        assertTrue(validResult.isSuccess)
+        assertTrue(repository.validateToken(token).isSuccess)
 
-        // Revoke the token
         repository.logoutUser(token)
 
-        // Now validate should fail
         val revokedResult = repository.validateToken(token)
         assertTrue(revokedResult.isFailure)
         assertEquals("token_revoked", revokedResult.exceptionOrNull()?.message)
-    }
-
-    @Test
-    fun `signUpUser rejects a nickname already in use`() = runTest {
-        every { userDatabaseDataSource.findByEmail("joao@example.com") } returns null
-        every { userDatabaseDataSource.findByUsername("joao") } returns listOf("joao")
-
-        val result = repository.signUpUser("joao@example.com", "securePassword123", "joao")
-
-        assertTrue(result.isFailure)
-        assertEquals("nickname_already_exists", result.exceptionOrNull()?.message)
     }
 
     @Test
@@ -220,14 +215,7 @@ class AuthRepositoryImplTest {
 
     @Test
     fun `logoutUser also revokes the refresh token of the same user`() = runTest {
-        val user = User(
-            id = "user-123",
-            email = "test@example.com",
-            username = "testuser",
-            avatar = null,
-            createdAt = "2026-07-22T10:00:00Z"
-        )
-        val token = jwtUtil.generateToken(user)
+        val token = jwtUtil.generateToken(existingUser)
 
         repository.logoutUser(token, refreshToken = "refresh-1")
 
