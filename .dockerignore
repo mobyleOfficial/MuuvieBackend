@@ -23,6 +23,12 @@ local.properties
 Dockerfile
 .dockerignore
 
+# Secrets and local tooling
+.env
+.kotlin/
+scripts/.venv/
+**/__pycache__/
+
 # Misc
 *.log
 .DS_Store

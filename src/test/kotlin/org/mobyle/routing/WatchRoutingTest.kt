@@ -133,7 +133,7 @@ class WatchRoutingTest {
                 single { GetMovieTimeline(repository) { LocalDate(2026, 10, 27) } }
                 single { SearchGifs(GifRepositoryImpl(null)) }
                 single { CommentAccess(comments, get()) }
-                single { GetThreadComments(comments, get()) }
+                single { GetThreadComments(comments, get(), io.mockk.mockk(relaxed = true)) }
                 single { PostComment(comments, get()) }
                 single { DeleteComment(comments, get()) }
             })

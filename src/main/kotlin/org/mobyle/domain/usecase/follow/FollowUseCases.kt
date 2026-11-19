@@ -3,6 +3,7 @@ package org.mobyle.domain.usecase.follow
 import org.mobyle.domain.model.FollowCard
 import org.mobyle.domain.model.FollowEdge
 import org.mobyle.domain.model.FollowStatus
+import org.mobyle.domain.model.ForbiddenException
 import org.mobyle.domain.model.NotFoundException
 import org.mobyle.domain.model.Page
 import org.mobyle.domain.model.PageRequest
@@ -12,6 +13,7 @@ import org.mobyle.domain.model.TooManyRequestsException
 import org.mobyle.domain.model.ValidationException
 import org.mobyle.domain.repository.ConversationRepository
 import org.mobyle.domain.repository.FollowRepository
+import org.mobyle.domain.repository.ModerationRepository
 import org.mobyle.domain.repository.RateLimiter
 import org.mobyle.domain.repository.SocialNotifier
 
@@ -37,11 +39,13 @@ class FollowAccount(
     private val follows: FollowRepository,
     private val notifier: SocialNotifier,
     private val rateLimiter: RateLimiter,
-    private val mutualChange: MutualChangeNotice
+    private val mutualChange: MutualChangeNotice,
+    private val moderation: ModerationRepository
 ) {
     operator fun invoke(userId: String, targetId: String): FollowStatus {
         if (userId == targetId) throw ValidationException("userId", "Cannot follow yourself")
         follows.userSummary(targetId) ?: throw NotFoundException("User not found")
+        if (moderation.blockedEitherWay(userId, targetId)) throw ForbiddenException("blocked", "You cannot follow this account")
         val before = follows.status(userId, targetId)
         if (before.following) return before
         if (!rateLimiter.tryAcquire("follow:$userId", FOLLOWS_PER_MINUTE, MINUTE_MS)) {

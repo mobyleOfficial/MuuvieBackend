@@ -1,5 +1,6 @@
 package org.mobyle.data.local.feed
 
+import org.mobyle.data.local.moderation.notBlockedWith
 import kotlinx.datetime.Clock
 import org.jetbrains.exposed.sql.JoinType
 import org.jetbrains.exposed.sql.Op
@@ -79,7 +80,9 @@ class ConversationDataSourceImpl : ConversationDataSource {
             (ConversationsTable.lastMessageAt less it.at) or
                 ((ConversationsTable.lastMessageAt eq it.at) and (ConversationsTable.id less it.id))
         } ?: Op.TRUE
-        val rows = conversationsOf(viewer, after, limit + 1)
+        // Conversations with someone blocked either way leave the list.
+        val unblocked = notBlockedWith(viewer, ConversationsTable.userA) and notBlockedWith(viewer, ConversationsTable.userB)
+        val rows = conversationsOf(viewer, after and unblocked, limit + 1)
         val page = rows.take(limit)
         val next = if (rows.size > limit) page.last().let { FeedCursor(it.lastMessageAt, it.id).encode() } else null
         Cursor(page, next)

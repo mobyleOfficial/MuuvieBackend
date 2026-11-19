@@ -21,6 +21,7 @@ fun Route.apiRoutes() {
     getWatchRouting()
     getImportsRouting()
     getUsersRouting()
+    getModerationRouting()
     getDiscoverRouting()
     getFeedRouting()
     getMessagesRouting()

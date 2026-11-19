@@ -43,7 +43,7 @@ class StatsDataSourceImplTest {
     private val shelves = ShelfRepositoryImpl(ShelfDataSourceImpl())
     private val shelfAccess = ShelfAccess(shelves)
     private val access = StatsAccess(
-        ProfileAccess(UserProfileRepositoryImpl(UserProfileDataSourceImpl(), importRepository = mockk(relaxed = true)), shelfAccess),
+        ProfileAccess(UserProfileRepositoryImpl(UserProfileDataSourceImpl(), importRepository = mockk(relaxed = true)), shelfAccess, mockk(relaxed = true)),
         shelfAccess
     )
     private val users = UserDatabaseDataSourceImpl()

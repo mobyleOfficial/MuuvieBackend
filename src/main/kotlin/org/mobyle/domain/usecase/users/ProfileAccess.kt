@@ -4,11 +4,16 @@ import org.mobyle.domain.model.NotFoundException
 import org.mobyle.domain.model.Profile
 import org.mobyle.domain.policy.ViewerRelation
 import org.mobyle.domain.policy.VisibilityPolicy
+import org.mobyle.domain.repository.ModerationRepository
 import org.mobyle.domain.repository.UserProfileRepository
 import org.mobyle.domain.usecase.shelves.ShelfAccess
 
 /** Finds a profile by id or @handle and puts it together as the viewer sees it (F5.1, F5.5). */
-class ProfileAccess(private val repository: UserProfileRepository, private val shelves: ShelfAccess) {
+class ProfileAccess(
+    private val repository: UserProfileRepository,
+    private val shelves: ShelfAccess,
+    private val moderation: ModerationRepository
+) {
 
     /** The external id behind [idOrHandle]: a user id, or a handle starting with @. */
     fun resolveUserId(idOrHandle: String): String {
@@ -22,6 +27,11 @@ class ProfileAccess(private val repository: UserProfileRepository, private val s
 
     fun profile(viewerId: String?, ownerId: String): Profile {
         val record = repository.getProfile(ownerId) ?: throw NotFoundException("User not found")
+        // Someone who blocked the viewer is not there for them; one the viewer blocked is, to be unblocked.
+        if (viewerId != null && viewerId != ownerId && moderation.blocks(ownerId, viewerId)) {
+            throw NotFoundException("User not found")
+        }
+        val blocked = viewerId != null && viewerId != ownerId && moderation.blocks(viewerId, ownerId)
         val relation = shelves.relation(viewerId, ownerId)
         val owner = relation == ViewerRelation.OWNER
         val isFollowing = viewerId != null && !owner && repository.isFollowing(viewerId, ownerId)
@@ -42,7 +52,8 @@ class ProfileAccess(private val repository: UserProfileRepository, private val s
             isFollowing = isFollowing,
             followsMe = followsMe,
             mutual = isFollowing && followsMe,
-            self = owner
+            self = owner,
+            blocked = blocked
         )
     }
 }

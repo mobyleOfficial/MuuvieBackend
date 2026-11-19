@@ -26,6 +26,8 @@ data class Profile(
     val followsMe: Boolean = false,
     val mutual: Boolean = false,
     val self: Boolean = false,
+    // The viewer blocked this account: the app offers "Desbloquear" instead of following.
+    val blocked: Boolean = false,
     // Only on GET /users/me.
     val isScraping: Boolean = false
 )

@@ -34,3 +34,6 @@ class InvalidFileException(code: String, message: String) : DomainException(code
 
 /** The request carries more data than the endpoint accepts. */
 class PayloadTooLargeException(code: String, message: String) : DomainException(code, message)
+
+/** The credential sent is missing, invalid or expired. */
+class UnauthorizedException(code: String, message: String) : DomainException(code, message)

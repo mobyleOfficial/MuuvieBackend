@@ -24,9 +24,8 @@ fun Route.getProfileRouting() {
 
     get("/profile") {
         val principal = call.authenticateJWT(validateToken) ?: return@get
-        val email = principal.claims.email
-
-        val user = userDatabaseDataSource.findByEmail(email)
+        // By id: an account signed in with Apple may have no e-mail.
+        val user = userDatabaseDataSource.findByExternalId(principal.claims.userId)
         if (user == null) {
             call.respond(
                 HttpStatusCode.NotFound,
@@ -70,7 +69,7 @@ fun Route.getProfileRouting() {
             }
         }
 
-        val user = userDatabaseDataSource.findByEmail(principal.claims.email)
+        val user = userDatabaseDataSource.findByExternalId(principal.claims.userId)
         if (user == null) {
             call.respond(
                 HttpStatusCode.NotFound,

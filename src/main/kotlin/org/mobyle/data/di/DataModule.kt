@@ -40,8 +40,8 @@ import org.mobyle.domain.repository.GifRepository
 import org.mobyle.domain.repository.WatchRepository
 import org.mobyle.domain.repository.LocadoraRepository
 import org.mobyle.domain.repository.ShelfRepository
-import org.mobyle.data.local.oauth.OAuthStateDataSource
-import org.mobyle.data.local.oauth.OAuthStateDataSourceImpl
+import org.mobyle.data.local.auth.UserIdentityDataSource
+import org.mobyle.data.local.auth.UserIdentityDataSourceImpl
 import org.mobyle.data.local.movies.MovieCatalogDataSource
 import org.mobyle.data.local.movies.MovieCatalogDataSourceImpl
 import org.mobyle.data.local.movies.PersonDataSource
@@ -57,8 +57,12 @@ import org.mobyle.data.remote.filmow.FilmowDataSource
 import org.mobyle.data.remote.filmow.FilmowDataSourceImpl
 import org.mobyle.data.service.WebSocketManager
 import org.mobyle.data.service.WsTokenManager
-import org.mobyle.data.remote.oauth.OAuthDataSource
-import org.mobyle.data.remote.oauth.OAuthDataSourceImpl
+import org.mobyle.data.remote.auth.social.HttpJwksSource
+import org.mobyle.data.remote.auth.social.IdTokenVerifier
+import org.mobyle.data.remote.auth.social.ProviderConfig
+import org.mobyle.data.remote.auth.social.SocialProviders
+import org.mobyle.data.remote.auth.social.SocialTokenVerifier
+import org.mobyle.domain.model.SocialProvider
 import org.mobyle.data.remote.tmdb.TmdbDataSource
 import org.mobyle.data.remote.tmdb.TmdbDataSourceImpl
 import org.mobyle.data.repository.AuthRepositoryImpl
@@ -131,6 +135,19 @@ import org.mobyle.domain.repository.NotificationRepository
 import org.mobyle.domain.repository.RateLimiter
 import org.mobyle.domain.repository.SocialNotifier
 import java.io.File
+import org.mobyle.data.local.moderation.ModerationDataSource
+import org.mobyle.data.local.moderation.ModerationDataSourceImpl
+import org.mobyle.data.local.user.AccountDataSource
+import org.mobyle.data.local.user.AccountDataSourceImpl
+import org.mobyle.data.remote.auth.social.AppleKeyConfig
+import org.mobyle.data.remote.auth.social.AppleTokenRevokerImpl
+import org.mobyle.data.repository.AccountRepositoryImpl
+import org.mobyle.data.repository.ModerationRepositoryImpl
+import org.mobyle.data.service.WebhookReportNotifier
+import org.mobyle.domain.repository.AccountRepository
+import org.mobyle.domain.repository.AppleTokenRevoker
+import org.mobyle.domain.repository.ModerationRepository
+import org.mobyle.domain.repository.ReportNotifier
 import org.koin.dsl.module
 
 val dataModule = module {
@@ -279,6 +296,33 @@ val dataModule = module {
     single<NotificationRepository> { NotificationRepositoryImpl(notificationDataSource = get()) }
     single<RateLimiter> { InMemoryRateLimiter() }
 
+    // Account deletion, blocks and reports (store requirements).
+    single<AccountDataSource> { AccountDataSourceImpl() }
+    single<AccountRepository> { AccountRepositoryImpl(accountDataSource = get(), userLocalDataSource = get()) }
+    single<ModerationDataSource> { ModerationDataSourceImpl() }
+    single<ModerationRepository> { ModerationRepositoryImpl(moderationDataSource = get()) }
+
+    // Reports go to REPORTS_WEBHOOK_URL (Slack or Discord) when set; they are always stored and logged.
+    single<ReportNotifier> {
+        val url = System.getenv("REPORTS_WEBHOOK_URL")?.takeIf { it.isNotBlank() }
+        if (url == null) ReportNotifier { _, _ -> } else WebhookReportNotifier(HttpClient(CIO) {
+            install(HttpTimeout) { requestTimeoutMillis = 10_000 }
+        }, url)
+    }
+
+    // Revoking Sign in with Apple tokens on account deletion needs the team's key: APPLE_TEAM_ID,
+    // APPLE_KEY_ID and APPLE_PRIVATE_KEY (the .p8 contents). The code is exchanged with APPLE_CLIENT_IDS.
+    single<AppleTokenRevoker> {
+        val teamId = System.getenv("APPLE_TEAM_ID")?.takeIf { it.isNotBlank() }
+        val keyId = System.getenv("APPLE_KEY_ID")?.takeIf { it.isNotBlank() }
+        val privateKey = System.getenv("APPLE_PRIVATE_KEY")?.takeIf { it.isNotBlank() }
+        val clientIds = System.getenv("APPLE_CLIENT_IDS").orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val config = if (teamId != null && keyId != null && privateKey != null) {
+            AppleKeyConfig(teamId, keyId, privateKey, clientIds)
+        } else null
+        AppleTokenRevokerImpl(HttpClient(CIO) { install(HttpTimeout) { requestTimeoutMillis = 10_000 } }, config)
+    }
+
     // Push is off until FCM_SERVICE_ACCOUNT (the service account JSON) or FCM_SERVICE_ACCOUNT_FILE is set.
     single<PushSender> {
         val key = System.getenv("FCM_SERVICE_ACCOUNT")?.takeIf { it.isNotBlank() }
@@ -358,42 +402,36 @@ val dataModule = module {
         RefreshTokenDataSourceImpl()
     }
 
-    single<OAuthStateDataSource> {
-        OAuthStateDataSourceImpl()
+    single<UserIdentityDataSource> {
+        UserIdentityDataSourceImpl()
     }
 
-    run {
-        val clientId = System.getenv("OAUTH_CLIENT_ID")?.takeIf { it.isNotBlank() }
-        val clientSecret = System.getenv("OAUTH_CLIENT_SECRET")?.takeIf { it.isNotBlank() }
-        val providerUrl = System.getenv("OAUTH_PROVIDER_URL")?.takeIf { it.isNotBlank() }
+    // Sign in with Apple and Google. Each provider is off until its client ids are set (comma-separated):
+    // GOOGLE_CLIENT_IDS takes the iOS, Android and web OAuth client ids, APPLE_CLIENT_IDS the bundle ids
+    // of the app flavors (and the Services ID, for sign-in outside iOS).
+    single<SocialTokenVerifier> {
+        fun clientIds(name: String): Set<String> =
+            System.getenv(name).orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
-        if (clientId != null && clientSecret != null && providerUrl != null) {
-            single<OAuthDataSource> {
-                val redirectUri = System.getenv("OAUTH_REDIRECT_URI")?.takeIf { it.isNotBlank() }
-                    ?: "http://localhost:8080/auth/oauth/callback"
-
-                val oauthHttpClient = HttpClient(CIO) {
-                    install(ContentNegotiation) {
-                        json(Json {
-                            prettyPrint = false
-                            isLenient = true
-                            ignoreUnknownKeys = true
-                        })
-                    }
-                    install(Logging) {
-                        level = LogLevel.INFO
-                    }
-                }
-
-                OAuthDataSourceImpl(
-                    httpClient = oauthHttpClient,
-                    oauthClientId = clientId,
-                    oauthClientSecret = clientSecret,
-                    oauthProviderUrl = providerUrl,
-                    oauthRedirectUri = redirectUri
-                )
+        val jwksHttpClient = HttpClient(CIO) {
+            install(HttpTimeout) {
+                requestTimeoutMillis = 10_000
             }
         }
+        IdTokenVerifier(
+            mapOf(
+                SocialProvider.GOOGLE to ProviderConfig(
+                    issuers = SocialProviders.GOOGLE_ISSUERS,
+                    audiences = clientIds("GOOGLE_CLIENT_IDS"),
+                    jwks = HttpJwksSource(jwksHttpClient, SocialProviders.GOOGLE_JWKS_URL)
+                ),
+                SocialProvider.APPLE to ProviderConfig(
+                    issuers = SocialProviders.APPLE_ISSUERS,
+                    audiences = clientIds("APPLE_CLIENT_IDS"),
+                    jwks = HttpJwksSource(jwksHttpClient, SocialProviders.APPLE_JWKS_URL)
+                )
+            )
+        )
     }
 
     single<JWTUtil> {
@@ -417,8 +455,8 @@ val dataModule = module {
 
     single<AuthRepository> {
         AuthRepositoryImpl(
-            oauthDataSource = getOrNull(),
-            oauthStateDataSource = get(),
+            socialTokenVerifier = get(),
+            userIdentityDataSource = get(),
             userRepository = get(),
             jwtUtil = get(),
             userDatabaseDataSource = get(),

@@ -24,6 +24,8 @@ services:
       db:
         condition: service_healthy
     environment:
+      # The container always listens on 8080; PORT in .env only picks the host port
+      - PORT=8080
       - DATABASE_URL=postgresql://${POSTGRES_USER:-moovie}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-moovie}
     restart: unless-stopped
 

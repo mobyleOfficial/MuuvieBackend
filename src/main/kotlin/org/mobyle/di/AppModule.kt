@@ -1,5 +1,10 @@
 package org.mobyle.di
 
+import org.mobyle.domain.usecase.moderation.BlockUser
+import org.mobyle.domain.usecase.moderation.GetBlockedUsers
+import org.mobyle.domain.usecase.moderation.ReportContent
+import org.mobyle.domain.usecase.moderation.UnblockUser
+import org.mobyle.domain.usecase.users.DeleteAccount
 import org.mobyle.domain.usecase.feed.ActivityAccess
 import org.mobyle.domain.usecase.feed.ActivityPublisher
 import org.mobyle.domain.usecase.feed.GetFeed
@@ -104,11 +109,10 @@ import org.mobyle.domain.usecase.imports.ImportAccess
 import org.mobyle.domain.usecase.imports.ResolveUnmatchedItem
 import org.mobyle.domain.usecase.imports.StartFileImport
 import org.mobyle.domain.usecase.imports.StartImport
-import org.mobyle.domain.usecase.auth.LoginUser
 import org.mobyle.domain.usecase.auth.LogoutUser
-import org.mobyle.domain.usecase.auth.ProcessOAuthCallback
+import org.mobyle.domain.usecase.auth.ChooseNickname
 import org.mobyle.domain.usecase.auth.RefreshToken
-import org.mobyle.domain.usecase.auth.SignUpUser
+import org.mobyle.domain.usecase.auth.SignInWithProvider
 import org.mobyle.domain.usecase.auth.CheckNicknameAvailability
 import org.mobyle.domain.usecase.auth.ValidateToken
 import org.mobyle.domain.usecase.movies.*
@@ -214,7 +218,7 @@ val appModule = module {
     factory { ReorderLocadoras(repository = get(), access = get()) }
 
     // Profile, highlights and discovery (v1, B5)
-    factory { ProfileAccess(repository = get(), shelves = get()) }
+    factory { ProfileAccess(repository = get(), shelves = get(), moderation = get()) }
     factory { GetMyProfile(repository = get(), access = get()) }
     factory { GetProfile(access = get()) }
     factory { GetProfileStats(access = get()) }
@@ -252,7 +256,7 @@ val appModule = module {
     factory { GetRecentGifs(repository = get()) }
     factory { SearchGifs(repository = get()) }
     factory { CommentAccess(repository = get(), logAccess = get()) }
-    factory { GetThreadComments(repository = get(), access = get()) }
+    factory { GetThreadComments(repository = get(), access = get(), moderation = get()) }
     factory { PostComment(repository = get(), access = get()) }
     factory { DeleteComment(repository = get(), access = get()) }
 
@@ -266,7 +270,7 @@ val appModule = module {
     factory { UnloveActivity(repository = get(), access = get()) }
     factory { HideActivity(repository = get(), access = get()) }
     factory { MutualChangeNotice(conversations = get(), notifier = get()) }
-    factory { FollowAccount(follows = get(), notifier = get(), rateLimiter = get(), mutualChange = get()) }
+    factory { FollowAccount(follows = get(), notifier = get(), rateLimiter = get(), mutualChange = get(), moderation = get()) }
     factory { UnfollowAccount(follows = get(), mutualChange = get()) }
     factory { GetFollowStatus(follows = get()) }
     factory { GetFollowList(follows = get()) }
@@ -285,6 +289,13 @@ val appModule = module {
 
     // Social use cases
     factory { SearchUsers(repository = get()) }
+
+    // Account deletion, blocks and reports
+    factory { DeleteAccount(accounts = get(), appleRevoker = get(), auth = get()) }
+    factory { BlockUser(moderation = get(), follows = get()) }
+    factory { UnblockUser(moderation = get()) }
+    factory { GetBlockedUsers(moderation = get()) }
+    factory { ReportContent(moderation = get(), rateLimiter = get(), notifier = get()) }
 
     // Activities use cases
 
@@ -372,11 +383,10 @@ val appModule = module {
     factory { ResolveUnmatchedItem(repository = get(), access = get()) }
 
     // Auth use cases
-    factory { ProcessOAuthCallback(authRepository = get<AuthRepository>()) }
+    factory { SignInWithProvider(authRepository = get<AuthRepository>()) }
+    factory { ChooseNickname(authRepository = get<AuthRepository>()) }
     factory { ValidateToken(authRepository = get<AuthRepository>()) }
     factory { RefreshToken(authRepository = get<AuthRepository>()) }
-    factory { LoginUser(authRepository = get<AuthRepository>()) }
-    factory { SignUpUser(authRepository = get<AuthRepository>()) }
     factory { LogoutUser(authRepository = get<AuthRepository>()) }
     factory { CheckNicknameAvailability(authRepository = get<AuthRepository>()) }
 }

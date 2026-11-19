@@ -24,13 +24,15 @@ object UsersTable : LongIdTable("users") {
     val bannerUrl = varchar("banner_url", 500).nullable()
     val accentColor = varchar("accent_color", 7).nullable()
     val links = array<String>("links").default(emptyList())
+    // False while an account created by social sign-in still has its generated nickname.
+    val nicknameConfirmed = bool("nickname_confirmed").default(true)
     // Curated profiles come first in the discovery hub.
     val featured = bool("featured").default(false)
 }
 
 object UserFollowsTable : LongIdTable("user_follows") {
-    val followerId = reference("follower_id", UsersTable)
-    val followedId = reference("followed_id", UsersTable)
+    val followerId = reference("follower_id", UsersTable, onDelete = ReferenceOption.CASCADE)
+    val followedId = reference("followed_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val createdAt = timestamp("created_at")
 
     init {
@@ -146,7 +148,7 @@ object MovieWatchProvidersTable : LongIdTable("movie_watch_providers") {
 }
 
 object UserMoviesTable : LongIdTable("user_movies") {
-    val userId = reference("user_id", UsersTable)
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val movieId = reference("movie_id", MoviesTable)
     // watched and want_to_watch mirror the system shelves; none otherwise.
     val status = varchar("status", 50)
@@ -174,7 +176,7 @@ object UserMoviesTable : LongIdTable("user_movies") {
 }
 
 object ShelvesTable : LongIdTable("shelves") {
-    val userId = reference("user_id", UsersTable)
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val name = varchar("name", 255)
     val description = text("description").nullable()
     val color = varchar("color", 7).nullable()
@@ -192,7 +194,7 @@ object ShelvesTable : LongIdTable("shelves") {
 }
 
 object ShelfItemsTable : LongIdTable("shelf_items") {
-    val shelfId = reference("shelf_id", ShelvesTable)
+    val shelfId = reference("shelf_id", ShelvesTable, onDelete = ReferenceOption.CASCADE)
     val movieId = reference("movie_id", MoviesTable)
     val position = integer("position")
     val addedAt = timestamp("added_at")
@@ -221,7 +223,7 @@ object ShelfVisitsTable : Table("shelf_visits") {
 }
 
 object WatchLogsTable : LongIdTable("watch_logs") {
-    val userId = reference("user_id", UsersTable)
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val movieId = reference("movie_id", MoviesTable)
     val watchedOn = date("watched_on")
     val cycle = integer("cycle").default(1)
@@ -244,10 +246,10 @@ object WatchLogsTable : LongIdTable("watch_logs") {
 }
 
 object CommentsTable : LongIdTable("comments") {
-    val userId = reference("user_id", UsersTable)
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val targetType = varchar("target_type", 20) // watch_log, rating, maratona, cineclube
     val targetId = long("target_id")
-    val parentId = optReference("parent_id", CommentsTable)
+    val parentId = optReference("parent_id", CommentsTable, onDelete = ReferenceOption.CASCADE)
     val body = text("body")
     val hasSpoiler = bool("has_spoiler").default(false)
     val createdAt = timestamp("created_at")
@@ -255,7 +257,7 @@ object CommentsTable : LongIdTable("comments") {
 }
 
 object TagsTable : LongIdTable("tags") {
-    val userId = reference("user_id", UsersTable)
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val name = varchar("name", 255)
 
     init {
@@ -298,8 +300,8 @@ object ProfileHighlightsTable : LongIdTable("profile_highlights") {
 }
 
 object MovieTagsTable : LongIdTable("movie_tags") {
-    val tagId = reference("tag_id", TagsTable)
-    val userMovieId = reference("user_movie_id", UserMoviesTable)
+    val tagId = reference("tag_id", TagsTable, onDelete = ReferenceOption.CASCADE)
+    val userMovieId = reference("user_movie_id", UserMoviesTable, onDelete = ReferenceOption.CASCADE)
 
     init {
         uniqueIndex("uq_tag_user_movie", tagId, userMovieId)
@@ -321,7 +323,7 @@ object RefreshTokensTable : LongIdTable("refresh_tokens") {
 }
 
 object LocadorasTable : LongIdTable("locadoras") {
-    val userId = reference("user_id", UsersTable)
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
     val name = varchar("name", 255)
     val description = text("description").nullable()
     val visibility = varchar("visibility", 20).default("public") // public, mutual, secret
@@ -336,8 +338,8 @@ object LocadorasTable : LongIdTable("locadoras") {
 }
 
 object LocadoraShelvesTable : LongIdTable("locadora_shelves") {
-    val locadoraId = reference("locadora_id", LocadorasTable)
-    val shelfId = reference("shelf_id", ShelvesTable)
+    val locadoraId = reference("locadora_id", LocadorasTable, onDelete = ReferenceOption.CASCADE)
+    val shelfId = reference("shelf_id", ShelvesTable, onDelete = ReferenceOption.CASCADE)
     val position = integer("position")
     val addedAt = timestamp("added_at")
 
@@ -630,4 +632,37 @@ object DiaryTasksTable : LongIdTable("diary_tasks") {
     val done = bool("done").default(false)
     val position = integer("position").default(0)
     val movieId = optReference("movie_id", MoviesTable, onDelete = ReferenceOption.SET_NULL)
+}
+
+/** The Apple and Google accounts an account signs in with: one row per provider account. */
+object UserIdentitiesTable : LongIdTable("user_identities") {
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE).index()
+    val provider = varchar("provider", 20) // apple, google
+    val subject = varchar("subject", 255)
+    val email = varchar("email", 255).nullable()
+    val createdAt = timestamp("created_at")
+
+    init {
+        uniqueIndex("uq_user_identities_provider_subject", provider, subject)
+    }
+}
+
+/** Who blocked whom (V23). A block removes the follows both ways and hides each user from the other. */
+object UserBlocksTable : Table("user_blocks") {
+    val blockerId = reference("blocker_id", UsersTable, onDelete = ReferenceOption.CASCADE)
+    val blockedId = reference("blocked_id", UsersTable, onDelete = ReferenceOption.CASCADE).index()
+    val createdAt = timestamp("created_at")
+    override val primaryKey = PrimaryKey(blockerId, blockedId)
+}
+
+/** Content or accounts reported by users, for the team to review (V23). */
+object ReportsTable : LongIdTable("reports") {
+    val reporterId = optReference("reporter_id", UsersTable, onDelete = ReferenceOption.SET_NULL)
+    val reportedUserId = optReference("reported_user_id", UsersTable, onDelete = ReferenceOption.SET_NULL)
+    val targetType = varchar("target_type", 20)
+    val targetId = varchar("target_id", 100)
+    val reason = varchar("reason", 20)
+    val details = varchar("details", 1000).nullable()
+    val status = varchar("status", 20).default("open") // open, actioned, dismissed
+    val createdAt = timestamp("created_at")
 }

@@ -34,6 +34,7 @@ import org.mobyle.data.local.database.ShelvesTable
 import org.mobyle.data.local.database.UserFollowsTable
 import org.mobyle.data.local.database.UsersTable
 import org.mobyle.data.local.database.userDbIdOf
+import org.mobyle.data.local.moderation.notBlockedWith
 import org.mobyle.domain.model.vocabulary.SystemShelfType
 import org.mobyle.domain.model.Activity
 import org.mobyle.domain.model.ActivityDraft
@@ -254,7 +255,7 @@ class ActivityDataSourceImpl : ActivityDataSource {
                 ((ActivitiesTable.createdAt eq it.at) and (ActivitiesTable.id less it.id))
         } ?: Op.TRUE
         val rows = (ActivitiesTable innerJoin UsersTable).selectAll()
-            .where { condition and after }
+            .where { condition and after and (viewer?.let { notBlockedWith(it, ActivitiesTable.actorId) } ?: Op.TRUE) }
             .orderBy(ActivitiesTable.createdAt to SortOrder.DESC, ActivitiesTable.id to SortOrder.DESC)
             .limit(limit + 1)
             .toList()

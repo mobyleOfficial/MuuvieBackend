@@ -58,6 +58,9 @@ object DatabaseTables {
         UserMissionsTable,
         DiaryDaysTable,
         DiaryTasksTable,
-        UniverseVisitsTable
+        UniverseVisitsTable,
+        UserIdentitiesTable,
+        UserBlocksTable,
+        ReportsTable
     )
 }

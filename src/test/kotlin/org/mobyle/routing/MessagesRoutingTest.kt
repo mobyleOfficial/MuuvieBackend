@@ -121,7 +121,7 @@ class MessagesRoutingTest {
             modules(module {
                 single { ValidateToken(authRepository) }
                 single { ShelfAccess(mockk<ShelfRepository>(relaxed = true)) }
-                single { ProfileAccess(profiles, get()) }
+                single { ProfileAccess(profiles, get(), io.mockk.mockk(relaxed = true)) }
                 single<SocialNotifier> { SocialNotifierImpl(webSocketManager, notifications, pushSender) }
                 single { webSocketManager }
                 single { wsTokens }

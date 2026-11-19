@@ -1,5 +1,6 @@
 package org.mobyle.data.local.user
 
+import org.mobyle.data.local.moderation.notBlockedWith
 import kotlinx.datetime.Clock
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -24,6 +25,8 @@ interface UserDatabaseDataSource {
     fun findByExternalId(userExternalId: String): User?
     fun save(user: User): User
     fun updateUser(userExternalId: String, username: String, bio: String?, avatarUrl: String?)
+    /** Sets the nickname an account picked and marks it confirmed; the @handle follows it when the account has none. */
+    fun confirmNickname(userExternalId: String, nickname: String)
     fun findByUsername(prefix: String): List<String>
     fun isUsernameTaken(username: String, exceptUserExternalId: String): Boolean
     fun countWatchedMovies(userExternalId: String): Int
@@ -61,27 +64,27 @@ class UserDatabaseDataSourceImpl : UserDatabaseDataSource {
             avatar = row[UsersTable.avatarUrl],
             bio = row[UsersTable.bio],
             createdAt = row[UsersTable.createdAt].toString(),
-            passwordHash = row[UsersTable.passwordHash]
+            passwordHash = row[UsersTable.passwordHash],
+            nicknameConfirmed = row[UsersTable.nicknameConfirmed]
         )
     }
 
     override fun save(user: User): User {
         return transaction {
             val now = Clock.System.now()
-            // The username becomes the @handle when it already fits the format and is free (B5).
-            val defaultHandle = user.username.lowercase().takeIf { candidate ->
-                isValidHandle(candidate) &&
-                    UsersTable.selectAll().where { UsersTable.handle eq candidate }.empty()
-            }
+            // The username becomes the @handle when it already fits the format and is free (B5). A generated
+            // nickname does not: the handle waits for the one the account picks (confirmNickname).
+            val defaultHandle = if (user.nicknameConfirmed) freeHandleFor(user.username) else null
             val userDbId = UsersTable.insertAndGetId {
                 it[externalId] = user.id
                 it[username] = user.username
-                it[email] = user.email
+                it[email] = user.email.takeIf { value -> value.isNotBlank() }
                 it[avatarUrl] = user.avatar
                 it[bio] = user.bio
                 it[passwordHash] = user.passwordHash
                 it[createdAt] = now
                 it[handle] = defaultHandle
+                it[nicknameConfirmed] = user.nicknameConfirmed
             }
             // Every account starts with "Já assisti" and "Quero ver" (F1.2).
             SystemShelves.ensure(userDbId.value, now)
@@ -97,6 +100,26 @@ class UserDatabaseDataSourceImpl : UserDatabaseDataSource {
                 it[UsersTable.avatarUrl] = avatarUrl
             }
         }
+    }
+
+    override fun confirmNickname(userExternalId: String, nickname: String) {
+        transaction {
+            val currentHandle = UsersTable.select(UsersTable.handle)
+                .where { UsersTable.externalId eq userExternalId }
+                .firstOrNull()
+                ?.get(UsersTable.handle)
+            val handle = currentHandle ?: freeHandleFor(nickname)
+            UsersTable.update({ UsersTable.externalId eq userExternalId }) {
+                it[username] = nickname
+                it[nicknameConfirmed] = true
+                it[UsersTable.handle] = handle
+            }
+        }
+    }
+
+    private fun freeHandleFor(nickname: String): String? = nickname.lowercase().takeIf { candidate ->
+        isValidHandle(candidate) &&
+            UsersTable.selectAll().where { UsersTable.handle eq candidate }.empty()
     }
 
     override fun findByUsername(prefix: String): List<String> {
@@ -205,7 +228,10 @@ class UserDatabaseDataSourceImpl : UserDatabaseDataSource {
                 .toSet()
 
             UsersTable.selectAll()
-                .where { (UsersTable.username like "%${query.lowercase()}%") and not(UsersTable.externalId eq currentUserExternalId) }
+                .where {
+                    (UsersTable.username like "%${query.lowercase()}%") and not(UsersTable.externalId eq currentUserExternalId) and
+                        notBlockedWith(currentUserDbId, UsersTable.id)
+                }
                 .limit(20)
                 .map { row ->
                     val userDbId = row[UsersTable.id].value

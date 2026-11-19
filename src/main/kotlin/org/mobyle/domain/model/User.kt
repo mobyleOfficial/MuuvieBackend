@@ -11,5 +11,7 @@ data class User(
     val avatar: String? = null,
     val bio: String? = null,
     val createdAt: String,
-    @Transient val passwordHash: String? = null
+    @Transient val passwordHash: String? = null,
+    // False while an account created by social sign-in still carries its generated nickname.
+    @Transient val nicknameConfirmed: Boolean = true
 )

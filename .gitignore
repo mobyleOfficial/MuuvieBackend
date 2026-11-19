@@ -51,3 +51,7 @@ bin/
 
 ### Claude ###
 .claude/
+
+### Python ###
+scripts/.venv/
+__pycache__/

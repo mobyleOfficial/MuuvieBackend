@@ -20,9 +20,13 @@ import kotlin.concurrent.thread
 class FilmowDataSourceImpl : FilmowDataSource {
 
     private val log = LoggerFactory.getLogger(FilmowDataSourceImpl::class.java)
+    /** The Python scraper's own lines, under their own logger so they can be filtered in the console. */
+    private val pyLog = LoggerFactory.getLogger("filmow.scraper.py")
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     companion object {
+        private const val STDERR_TAIL_LINES = 40
+        private const val QUICK_CHECK_SECONDS = 15L
         private const val SCRIPT_PATH = "scripts/filmow_scraper.py"
         private const val VENV_PYTHON_WIN = "scripts/.venv/Scripts/python.exe"
         private const val VENV_PYTHON_UNIX = "scripts/.venv/bin/python"
@@ -37,6 +41,7 @@ class FilmowDataSourceImpl : FilmowDataSource {
         }
 
         val pythonBin = resolveVenvPython()
+        checkDependencies(pythonBin)
 
         val command = mutableListOf(pythonBin, scriptFile.absolutePath, username)
         if (cookies.isNotBlank()) {
@@ -61,22 +66,34 @@ class FilmowDataSourceImpl : FilmowDataSource {
         val process = try {
             ProcessBuilder(command)
                 .redirectErrorStream(false)
-                .apply { knownIdsFile?.let { environment()[KNOWN_IDS_ENV] = it.absolutePath } }
+                .apply {
+                    environment()["PYTHONUNBUFFERED"] = "1"
+                    environment()["PYTHONIOENCODING"] = "utf-8"
+                    knownIdsFile?.let { environment()[KNOWN_IDS_ENV] = it.absolutePath }
+                }
                 .start()
         } catch (e: Exception) {
+            log.error("[SCRAPE] Could not start the scraper process ($pythonBin): ${e.message}", e)
             knownIdsFile?.delete()
             throw e
         }
+        log.info("[SCRAPE] Scraper process started (pid=${process.pid()})")
 
+        // The scraper reports progress on stderr; each line goes to the log (and so to the IDE console).
+        val stderrTail = ArrayDeque<String>()
         val stderrThread = thread(isDaemon = true, name = "scraper-stderr") {
-            process.errorStream.bufferedReader().useLines { lines ->
+            process.errorStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                 for (line in lines) {
-                    println("[SCRAPE/py] $line")
+                    synchronized(stderrTail) {
+                        stderrTail.addLast(line)
+                        if (stderrTail.size > STDERR_TAIL_LINES) stderrTail.removeFirst()
+                    }
+                    logScraperLine(line)
                 }
             }
         }
 
-        val stdout = process.inputStream.bufferedReader().readText()
+        val stdout = process.inputStream.bufferedReader(Charsets.UTF_8).readText()
 
         val exited = process.waitFor(TIMEOUT_MINUTES, TimeUnit.MINUTES)
         stderrThread.join(5000)
@@ -89,14 +106,25 @@ class FilmowDataSourceImpl : FilmowDataSource {
 
         log.info("[SCRAPE] Scraper exited with ${process.exitValue()} in ${(System.currentTimeMillis() - startTime) / 1000}s")
         if (process.exitValue() != 0) {
-            log.error("[SCRAPE] Scraper failed for @$username: ${stdout.take(1000)}")
-            throw RuntimeException("Filmow scraper failed: $stdout")
+            val tail = synchronized(stderrTail) { stderrTail.toList() }
+            log.error(
+                "[SCRAPE] Scraper failed for @$username (exit ${process.exitValue()}). stdout: ${stdout.take(1000).ifBlank { "<empty>" }}\n" +
+                    "[SCRAPE] Last ${tail.size} stderr lines:\n" + tail.joinToString("\n") { "    $it" }
+            )
+            val reason = stdout.takeIf { it.isNotBlank() } ?: tail.lastOrNull() ?: "no output"
+            throw RuntimeException("Filmow scraper failed (exit ${process.exitValue()}): $reason")
         }
 
         if (stdout.isBlank()) {
             log.error("[SCRAPE] Scraper exited 0 with empty stdout for @$username")
         }
-        val profile = parseResult(stdout)
+        log.info("[SCRAPE] Parsing scraper output (${stdout.length} chars)")
+        val profile = try {
+            parseResult(stdout)
+        } catch (e: Exception) {
+            log.error("[SCRAPE] Could not parse the scraper output: ${e.message}. Start: ${stdout.take(500)}", e)
+            throw e
+        }
         val totalMs = System.currentTimeMillis() - startTime
         log.info("[SCRAPE] Done in ${totalMs / 1000}s — " +
             "watched=${profile.watched.size}, " +
@@ -113,6 +141,7 @@ class FilmowDataSourceImpl : FilmowDataSource {
 
         if (obj.containsKey("error")) {
             val errorMsg = obj["error"]?.jsonPrimitive?.content ?: "Unknown error"
+            log.error("[SCRAPE] Scraper reported an error: $errorMsg")
             throw RuntimeException("Filmow scraper error: $errorMsg")
         }
 
@@ -230,21 +259,67 @@ class FilmowDataSourceImpl : FilmowDataSource {
     private fun cookieNames(cookies: String): List<String> =
         cookies.split(";").mapNotNull { pair -> pair.substringBefore("=").trim().takeIf { it.isNotEmpty() } }
 
+    /** Logs the scraper's stderr: [FATAL] and tracebacks as errors, refused requests as warnings. */
+    private fun logScraperLine(line: String) {
+        when {
+            line.contains("[FATAL]") || line.contains("Traceback") || line.contains("Error:") -> pyLog.error(line)
+            line.contains("[BLOCKED]") || line.contains("Rate limited") || line.contains("error:") -> pyLog.warn(line)
+            else -> pyLog.info(line)
+        }
+    }
+
     private fun resolveVenvPython(): String {
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         val venvPath = if (isWindows) VENV_PYTHON_WIN else VENV_PYTHON_UNIX
 
         val venvFile = File(venvPath)
-        if (venvFile.exists()) return venvFile.absolutePath
-
-        // Alpine Linux has python3, not python
-        for (candidate in listOf("python3", "python")) {
-            try {
-                val check = ProcessBuilder(candidate, "--version").start()
-                if (check.waitFor() == 0) return candidate
-            } catch (_: Exception) { }
+        if (venvFile.exists()) {
+            log.info("[SCRAPE] Using the venv Python: ${venvFile.absolutePath}")
+            return venvFile.absolutePath
         }
+        log.warn(
+            "[SCRAPE] No venv at ${venvFile.absolutePath} (working dir: ${System.getProperty("user.dir")}); " +
+                "falling back to the Python on the PATH"
+        )
+
+        // Alpine Linux has python3, not python. On Windows, python3 may be the Microsoft Store alias, which fails.
+        for (candidate in listOf("python3", "python")) {
+            val (exit, output) = runQuick(candidate, "--version")
+            log.info("[SCRAPE] Python candidate '$candidate': exit=$exit, output=${output.ifBlank { "<none>" }}")
+            if (exit == 0) return candidate
+        }
+        log.error("[SCRAPE] No working Python found on the PATH; trying 'python3' anyway")
         return "python3"
+    }
+
+    /** Fails early, with the fix, when the interpreter lacks the scraper's packages. */
+    private fun checkDependencies(pythonBin: String) {
+        val (exit, output) = runQuick(pythonBin, "-c", "import cloudscraper, bs4, sys; print(sys.executable, sys.version.split()[0])")
+        if (exit == 0) {
+            log.info("[SCRAPE] Python ready: $output")
+            return
+        }
+        log.error(
+            "[SCRAPE] Python '$pythonBin' cannot import the scraper's packages (exit=$exit): $output\n" +
+                "[SCRAPE] Fix: python -m venv scripts/.venv && scripts/.venv/${if (File.separatorChar == '\\') "Scripts" else "bin"}/pip install -r scripts/requirements.txt"
+        )
+        throw IllegalStateException("Python '$pythonBin' is missing the scraper dependencies: ${output.lines().lastOrNull { it.isNotBlank() }}")
+    }
+
+    /** Runs a short command and returns (exit code, combined output); -1 when it cannot start or hangs. */
+    private fun runQuick(vararg command: String): Pair<Int, String> = try {
+        val process = ProcessBuilder(*command).redirectErrorStream(true).start()
+        val output = StringBuilder()
+        val reader = thread(isDaemon = true) { output.append(process.inputStream.bufferedReader().readText()) }
+        if (!process.waitFor(QUICK_CHECK_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            -1 to "timed out after ${QUICK_CHECK_SECONDS}s"
+        } else {
+            reader.join(1000)
+            process.exitValue() to output.toString().trim()
+        }
+    } catch (e: Exception) {
+        -1 to (e.message ?: e.javaClass.simpleName)
     }
 
     private fun resolveScriptPath(): File {
@@ -257,6 +332,7 @@ class FilmowDataSourceImpl : FilmowDataSource {
         val fromJar = File(jarDir, SCRIPT_PATH)
         if (fromJar.exists()) return fromJar
 
+        log.warn("[SCRAPE] Scraper not found at ${relative.absolutePath} nor ${fromJar.absolutePath}")
         return relative
     }
 }
